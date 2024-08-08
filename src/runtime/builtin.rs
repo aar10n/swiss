@@ -63,7 +63,8 @@ macro_rules! builtin_op {
 pub type NativeFn = fn(&mut Context, Vec<Value>) -> Result<Value, Exception>;
 
 pub fn register_builtin_module(ctx: &mut Context) {
-    ctx.new_module("builtin")
+    ctx.modules
+        .new_module("builtin")
         .unwrap()
         .with_function(builtin_fn!(pos, |&ctx, x: num| Ok(x)))
         .with_function(builtin_fn!(neg, |&ctx, x: num| Ok(-x)))

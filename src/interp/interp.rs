@@ -442,7 +442,7 @@ impl<'ctx> Interp<'ctx, Value> for Path {
         trace! {self, intrp, "Interp::<Value>::Path", {
             let name = self.name_part();
             let module = intrp
-                .ctx
+                .ctx.modules
                 .get_module(self.module_parts())?;
 
             let constant = module.resolve_constant(name).map_err(InterpError::from)?;
@@ -455,7 +455,7 @@ impl<'ctx> Interp<'ctx, Function> for Path {
     fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<Function> {
         trace! {self, intrp, "Interp::<Function>::Path", {
             let name = self.name_part();
-            let module = intrp.ctx.get_module(self.module_parts()).map_err(InterpError::from)?;
+            let module = intrp.ctx.modules.get_module(self.module_parts()).map_err(InterpError::from)?;
             module
                 .resolve_function(name)
                 .map_err(InterpError::from)

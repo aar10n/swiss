@@ -1,13 +1,15 @@
 use super::dimension::{Dimension, DimensionTable};
 use super::name::{Constant, Function, Name, NameResult, NameTable, Param};
 use super::operator::{OpAssoc, OpKind, Operator, OperatorTable};
+use super::path::{PathLike, PathTree};
 use super::unit::{Unit, UnitKind, UnitTable};
 use super::{DeclError, NameError};
 
 use crate::ast::*;
 use crate::id::module_id;
-pub use crate::id::ModuleId;
 use crate::source::{source_id, SourceFile, SourceId, SourceSpan, Spanned};
+
+pub use crate::id::ModuleId;
 
 use smallvec::{smallvec, SmallVec};
 use std::cell::RefCell;
@@ -20,6 +22,8 @@ use ustr::Ustr;
 
 pub struct Module {
     pub id: ModuleId,
+    pub index: usize,
+
     pub name: Ustr,
     pub names: NameTable,
     pub dimensions: DimensionTable,
@@ -28,9 +32,10 @@ pub struct Module {
 }
 
 impl Module {
-    pub fn new(name: Ustr) -> Self {
+    pub fn new(index: usize, name: Ustr) -> Self {
         Self {
             id: module_id::next(),
+            index,
             name,
             names: NameTable::new(),
             dimensions: DimensionTable::new(),
@@ -167,8 +172,75 @@ impl Module {
     }
 }
 
-impl From<Ustr> for Module {
-    fn from(name: Ustr) -> Self {
-        Self::new(name)
+impl From<(usize, Ustr)> for Module {
+    fn from((index, name): (usize, Ustr)) -> Self {
+        Self::new(index, name)
+    }
+}
+
+// MARK: ModuleMap
+
+pub struct ModuleMap {
+    module_tree: PathTree<Module>,
+    module_to_index: BTreeMap<ModuleId, usize>,
+}
+
+impl ModuleMap {
+    pub fn new() -> Self {
+        Self {
+            module_tree: PathTree::new(),
+            module_to_index: BTreeMap::new(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.module_tree.len()
+    }
+
+    pub fn get_module(&mut self, path: impl PathLike) -> Result<&mut Module, NameError> {
+        self.module_tree
+            .get_mut(path)
+            .map(|(module, _)| module)
+            .map_err(|spanned| NameError::new("invalid module", spanned))
+    }
+
+    pub fn new_module(&mut self, path: impl PathLike) -> Result<&mut Module, NameError> {
+        let index = self.module_tree.len();
+        let module = self
+            .module_tree
+            .insert(path)
+            .map_err(|spanned| NameError::new("invalid module", spanned))?;
+
+        self.module_to_index.insert(module.id, index);
+        Ok(module)
+    }
+
+    pub fn get_or_add_module(&mut self, path: impl PathLike) -> Result<&mut Module, NameError> {
+        let next_index = self.module_tree.len();
+        let (module, index) = self
+            .module_tree
+            .get_or_insert(path)
+            .map_err(|spanned| NameError::new("invalid module", spanned))?;
+
+        if index == next_index {
+            self.module_to_index.insert(module.id, index);
+        }
+        Ok(module)
+    }
+}
+
+impl Index<ModuleId> for ModuleMap {
+    type Output = Module;
+
+    fn index(&self, id: ModuleId) -> &Self::Output {
+        let index = self.module_to_index[&id];
+        &self.module_tree[index]
+    }
+}
+
+impl IndexMut<ModuleId> for ModuleMap {
+    fn index_mut(&mut self, id: ModuleId) -> &mut Self::Output {
+        let index = self.module_to_index[&id];
+        &mut self.module_tree[index]
     }
 }

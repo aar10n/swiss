@@ -46,7 +46,7 @@ pub fn eval_source(
         }
     }
 
-    let mut module = match parser::parse(ctx.module_by_id(module_id), &tokens) {
+    let mut module = match parser::parse(&mut ctx.modules[module_id], &tokens) {
         Ok(module) => module,
         Err(err) => return err.into_error_result(),
     };

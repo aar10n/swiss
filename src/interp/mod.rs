@@ -57,8 +57,7 @@ pub fn evaluate(ctx: &mut Context, expr: &Expr) -> Result<Value, Error> {
 }
 
 pub fn interpret(ctx: &mut Context, ast_module: &Module) -> InterpResult<Option<Value>> {
-    let module_index = ctx.get_module_index(ast_module.module_id);
-    ctx.with_active_module(module_index, |ctx| {
+    ctx.with_active_module(ast_module.module_id, |ctx| {
         let mut interp = interp::Interpreter::new(ctx);
         let mut value = None;
         for item in &ast_module.items {

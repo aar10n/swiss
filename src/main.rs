@@ -51,7 +51,7 @@ fn main() -> io::Result<()> {
 
     // create the runtime context
     let mut ctx = driver::new_context();
-    let module_id = ctx.new_module("global").unwrap().id;
+    let module_id = ctx.modules.new_module("global").unwrap().id;
     for (path, source) in sources.into_iter() {
         let source_id = ctx.sources.add_source(path, source);
         if let Err(err) = driver::eval_source(&mut ctx, source_id, module_id) {
@@ -64,8 +64,8 @@ fn main() -> io::Result<()> {
         return Ok(());
     }
 
-    repl::main(&mut ctx, |ctx, (i, line)| {
-        let source_id = ctx.sources.add_source(format!("<repl {}>", i + 1), line);
+    repl::main(&mut ctx, |ctx, (_, line)| {
+        let source_id = ctx.sources.add_source(format!("<module>"), line);
         if let Err(err) = driver::eval_source(ctx, source_id, module_id) {
             err.print_stderr(ctx);
         }

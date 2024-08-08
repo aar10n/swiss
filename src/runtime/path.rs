@@ -20,7 +20,7 @@ pub struct PathTree<T> {
     items: Vec<T>,
 }
 
-impl<T: From<Ustr>> PathTree<T> {
+impl<T: From<(usize, Ustr)>> PathTree<T> {
     pub fn new() -> Self {
         let root = TreeNode::new_parent("".into());
         Self {
@@ -119,7 +119,7 @@ impl<T: From<Ustr>> PathTree<T> {
             Ok(next)
         } else {
             let index = self.items.len();
-            let item = T::from(name.raw);
+            let item = T::from((index, name.raw));
             self.items.push(item);
             let node = parent.add_child(name.raw, index);
             Ok(node)
@@ -151,7 +151,7 @@ impl<T: From<Ustr>> PathTree<T> {
         }
 
         let index = self.items.len();
-        let item = T::from(name.raw);
+        let item = T::from((index, name.raw));
         self.items.push(item);
         let node = parent.add_child(name.raw, index);
         Ok(node)
