@@ -11,8 +11,9 @@ mod repl;
 mod runtime;
 mod source;
 
-use print::PrettyPrint;
-use print::PrettyString;
+use id::{ModuleId, SourceId};
+use print::ansi::{GREEN, RESET, YELLOW};
+use print::{PrettyPrint, PrettyString};
 use runtime::Context;
 use source::SourceFile;
 
@@ -27,9 +28,9 @@ use clap::Parser;
 #[command(author, version, about, long_about = None)]
 struct Args {
     #[arg(short, long, help = "Evaluate the given file(s)")]
-    files: Vec<String>,
+    file: Vec<String>,
 
-    #[arg(short, help = "Run an interactive REPL")]
+    #[arg(short, long, help = "Run an interactive REPL")]
     interactive: bool,
 
     #[clap(value_parser)]
@@ -39,7 +40,7 @@ struct Args {
 fn main() -> io::Result<()> {
     let args = Args::parse();
     let mut sources = Vec::new();
-    for path in args.files {
+    for path in args.file {
         sources.push((path.clone(), read_from_file(&path)));
     }
 
@@ -48,14 +49,15 @@ fn main() -> io::Result<()> {
         Some(file) => sources.push((file.to_owned(), read_from_file(file))),
         None => (),
     };
+    let num_sources = sources.len();
 
     // create the runtime context
     let mut ctx = driver::new_context();
     let module_id = ctx.modules.new_module("global").unwrap().id;
-    for (path, source) in sources.into_iter() {
+    for (i, (path, source)) in sources.into_iter().enumerate() {
         let source_id = ctx.sources.add_source(path, source);
-        if let Err(err) = driver::eval_source(&mut ctx, source_id, module_id) {
-            err.print_stderr(&ctx)?;
+        let print_result = i == num_sources - 1 && !args.interactive;
+        if let Err(()) = evaluate(&mut ctx, source_id, module_id, print_result) {
             std::process::exit(1);
         }
     }
@@ -66,11 +68,29 @@ fn main() -> io::Result<()> {
 
     repl::main(&mut ctx, |ctx, (_, line)| {
         let source_id = ctx.sources.add_source(format!("<module>"), line);
-        if let Err(err) = driver::eval_source(ctx, source_id, module_id) {
-            err.print_stderr(ctx);
-        }
+        evaluate(ctx, source_id, module_id, /*print_result=*/ true);
         Ok(()) // continue
     });
+}
+
+fn evaluate(
+    ctx: &mut Context,
+    source_id: SourceId,
+    module_id: ModuleId,
+    print_result: bool,
+) -> Result<(), ()> {
+    match driver::eval_source(ctx, source_id, module_id) {
+        Ok(Some(value)) if print_result => Ok(println!(
+            "{GREEN}RESULT:{RESET} {}",
+            value.pretty_string(&ctx)
+        )),
+        Ok(None) if print_result => Ok(println!("{GREEN}RESULT:{RESET} {YELLOW}None{RESET}")),
+        Ok(_) => Ok(()),
+        Err(err) => {
+            err.print_stderr(ctx);
+            Err(())
+        }
+    }
 }
 
 fn read_from_file(path: &str) -> String {

@@ -1,6 +1,6 @@
 use super::{node_id, NodeId};
 pub use crate::impl_spannable;
-pub use crate::source::{SourcePos, SourceSpan};
+pub use crate::source::{SourcePos, SourceSpan, Spanned};
 
 use either::{Either, Left, Right};
 use std::hash::Hash;
@@ -169,6 +169,16 @@ impl<T> DerefMut for ListNode<T> {
 pub trait Spannable: Sized {
     fn with_span(self, span: SourceSpan) -> Self;
     fn span(&self) -> SourceSpan;
+}
+
+impl<T> Spannable for Spanned<T> {
+    fn with_span(self, span: SourceSpan) -> Self {
+        Self { span, ..self }
+    }
+
+    fn span(&self) -> SourceSpan {
+        self.span
+    }
 }
 
 #[macro_export]

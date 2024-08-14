@@ -87,7 +87,7 @@ impl<'a> Lexer<'a> {
             if self.state == LexerState::StartOfDirective {
                 self.lex_directive()
             } else {
-                self.lex_identifier()
+                self.lex_identifier_or_similar()
             }
         } else if ch == '/' {
             match self.peek(1) {
@@ -250,12 +250,18 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn lex_identifier(&mut self) -> LexResult<Token> {
+    fn lex_identifier_or_similar(&mut self) -> LexResult<Token> {
         let ident = self.take_while(is_identifier_char_continue);
         let token = if let Some(keyword) = KEYWORDS.get(&ident) {
             Token::Keyword(keyword.clone())
         } else {
-            Token::Identifier(Ustr::from(&ident))
+            match ident.as_str() {
+                "nan" | "NaN" => Token::Float("NaN".to_string()),
+                "inf" | "Inf" => Token::Float("Inf".to_string()),
+                "true" => Token::Bool(true),
+                "false" => Token::Bool(false),
+                _ => Token::Identifier(Ustr::from(&ident)),
+            }
         };
 
         Ok(token)

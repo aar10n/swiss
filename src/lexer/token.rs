@@ -10,6 +10,7 @@ use ustr::Ustr;
 pub enum Token {
     Integer(String, i32 /* radix */),
     Float(String),
+    Bool(bool),
     String(String),
     Keyword(Keyword),
     Operator(Ustr),
@@ -40,6 +41,10 @@ impl Token {
 
     pub fn is_number(&self) -> bool {
         matches!(self, Token::Integer(_, _) | Token::Float(_))
+    }
+
+    pub fn is_bool(&self) -> bool {
+        matches!(self, Token::Bool(_))
     }
 
     pub fn is_string(&self) -> bool {
@@ -78,7 +83,7 @@ impl Token {
         match self {
             Token::Operator(op) => Some(op.clone()),
             Token::AssignOp => Some(Ustr::from("=")),
-            Token::Colon => Some(Ustr::from(":")),
+            Token::Comma => Some(Ustr::from(",")),
             _ => None,
         }
     }
@@ -89,6 +94,7 @@ impl Display for Token {
         match self {
             Token::Integer(s, radix) => write!(f, "Integer({}#{})", s, radix),
             Token::Float(s) => write!(f, "{}", s),
+            Token::Bool(b) => write!(f, "{}", b),
             Token::String(s) => write!(f, "{}", s),
             Token::Keyword(k) => write!(f, "{:?}", k),
             Token::Operator(op) => write!(f, "{}", op),
@@ -120,6 +126,7 @@ impl<Ctx> PrettyPrint<Ctx> for Token {
         match self {
             Token::Integer(s, radix) => write!(out, "Integer {NUMBER}{}{RESET}", s),
             Token::Float(s) => write!(out, "Float {NUMBER}{}{RESET}", s),
+            Token::Bool(b) => write!(out, "Bool {NUMBER}{}{RESET}", b),
             Token::String(s) => write!(out, "String {STRING}{}{RESET}", s),
             Token::Keyword(k) => write!(out, "Keyword {KEYWORD}{:?}{RESET}", k),
             Token::Operator(op) => write!(out, "Operator {OPERATOR}{}{RESET}", op),

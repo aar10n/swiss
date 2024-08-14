@@ -183,12 +183,6 @@ impl From<Float> for Quantity {
     }
 }
 
-impl From<bool> for Quantity {
-    fn from(v: bool) -> Self {
-        Self::int(Integer::from(v as i8), Dim::none())
-    }
-}
-
 macro_rules! impl_from_integer {
     ($t:ty) => {
         impl From<$t> for Quantity {

@@ -44,6 +44,12 @@ pub trait Visitor<'a, S: Default, E>: Sized {
     fn visit_expr(&mut self, expr: &mut Expr) -> Result<S, E> {
         expr.walk(self)
     }
+    fn visit_list(&mut self, list: &mut ListNode<Expr>) -> Result<S, E> {
+        list.walk(self)
+    }
+    fn visit_tuple(&mut self, tuple: &mut ListNode<Expr>) -> Result<S, E> {
+        tuple.walk(self)
+    }
     fn visit_path(&mut self, path: &mut Path) -> Result<S, E> {
         path.walk(self)
     }
@@ -58,6 +64,12 @@ pub trait Visitor<'a, S: Default, E>: Sized {
     }
     fn visit_number(&mut self, number: &mut Number) -> Result<S, E> {
         number.walk(self)
+    }
+    fn visit_string(&mut self, string: &mut String) -> Result<S, E> {
+        Ok(S::default())
+    }
+    fn visit_boolean(&mut self, boolean: &mut bool) -> Result<S, E> {
+        Ok(S::default())
     }
 }
 
@@ -285,6 +297,12 @@ impl Visit for Expr {
                 func.visit(visitor)?;
                 args.visit(visitor)?;
             }
+            ExprKind::List(list) => {
+                visitor.visit_list(list)?;
+            }
+            ExprKind::Tuple(tuple) => {
+                visitor.visit_tuple(tuple)?;
+            }
             ExprKind::Path(path) => {
                 path.visit(visitor)?;
             }
@@ -293,6 +311,12 @@ impl Visit for Expr {
             }
             ExprKind::Number(num) => {
                 num.visit(visitor)?;
+            }
+            ExprKind::String(string) => {
+                visitor.visit_string(string)?;
+            }
+            ExprKind::Boolean(boolean) => {
+                visitor.visit_boolean(boolean)?;
             }
         };
         Ok(S::default())

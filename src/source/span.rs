@@ -185,6 +185,15 @@ impl<T: AsRef<str>> From<T> for Spanned<Ustr> {
     }
 }
 
+// impl From<&str> for Spanned<String> {
+//     fn from(value: &str) -> Self {
+//         Spanned {
+//             raw: value.to_string(),
+//             span: SourceSpan::default(),
+//         }
+//     }
+// }
+
 impl<T: Copy> Copy for Spanned<T> {}
 
 impl<T: Display> Display for Spanned<T> {

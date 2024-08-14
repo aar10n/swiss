@@ -38,16 +38,16 @@ macro_rules! builtin_params {
 
 #[rustfmt::skip]
 macro_rules! builtin_fn {
-    ($name:ident, |&$ctx:ident, $($p:ident : $ty:ident),*| $body:expr) => {{
+    ($name:tt, |&$ctx:ident, $($p:ident : $ty:ident),*| $body:expr) => {{
         let params = builtin_params!($($p:$ty),*);
-        Function::builtin(stringify!($name), params, |ctx, mut args| {
+        Function::builtin($name, params, |ctx, mut args| {
             let f = |$ctx: &mut Context, $($p: builtin_type!($ty)),*| -> Result<_, Exception> { $body };
             Ok(Value::from(f(ctx, $(take_arg(ctx, stringify!($p), &mut args)?),*)?))
         })
     }};
-    ($name:ident, |$($p:ident : $ty:ident),*| $($part:ident)::+) => {{
+    ($name:tt, |$($p:ident : $ty:ident),*| $($part:ident)::+) => {{
         let params = builtin_params!($($p:$ty),*);
-        Function::builtin(stringify!($name), params, |ctx, mut args| {
+        Function::builtin($name, params, |ctx, mut args| {
             Ok(Value::from(($($part)::+)(ctx, $(take_arg(ctx, stringify!($p), &mut args)?),*)?))
         })
     }};
@@ -63,30 +63,34 @@ macro_rules! builtin_op {
 pub type NativeFn = fn(&mut Context, Vec<Value>) -> Result<Value, Exception>;
 
 pub fn register_builtin_module(ctx: &mut Context) {
+    #[rustfmt::skip]
     ctx.modules
         .new_module("builtin")
         .unwrap()
-        .with_function(builtin_fn!(pos, |&ctx, x: num| Ok(x)))
-        .with_function(builtin_fn!(neg, |&ctx, x: num| Ok(-x)))
-        .with_function(builtin_fn!(add, |x: num, y: num| builtin::safe_add))
-        .with_function(builtin_fn!(sub, |x: num, y: num| builtin::safe_sub))
-        .with_function(builtin_fn!(mul, |x: num, y: num| builtin::safe_mul))
-        .with_function(builtin_fn!(div, |x: num, y: num| builtin::safe_div))
-        .with_function(builtin_fn!(pow, |x: num, y: num| builtin::safe_pow))
-        .with_function(builtin_fn!(eq, |x: num, y: num| builtin::safe_eq))
-        .with_function(builtin_fn!(ne, |x: num, y: num| builtin::safe_ne))
-        .with_function(builtin_fn!(lt, |x: num, y: num| builtin::safe_lt))
-        .with_function(builtin_fn!(le, |x: num, y: num| builtin::safe_le))
-        .with_function(builtin_fn!(gt, |x: num, y: num| builtin::safe_gt))
-        .with_function(builtin_fn!(ge, |x: num, y: num| builtin::safe_ge))
-        .with_function(builtin_fn!(not, |x: int| builtin::safe_not))
-        .with_function(builtin_fn!(and, |x: int, y: int| builtin::safe_and))
-        .with_function(builtin_fn!(or, |x: int, y: int| builtin::safe_or))
-        .with_function(builtin_fn!(bit_not, |x: num| builtin::safe_bit_not))
-        .with_function(builtin_fn!(bit_or, |x: num, y: int| builtin::safe_bit_or))
-        .with_function(builtin_fn!(bit_and, |x: num, y: int| builtin::safe_bit_and))
-        .with_function(builtin_fn!(bit_shl, |x: num, y: int| builtin::safe_bit_shl))
-        .with_function(builtin_fn!(bit_shr, |x: num, y: int| builtin::safe_bit_shr));
+        .with_function(builtin_fn!("pos", |&ctx, x: num| Ok(x)))
+        .with_function(builtin_fn!("neg", |&ctx, x: num| Ok(-x)))
+        .with_function(builtin_fn!("add", |x: num, y: num| builtin::safe_add))
+        .with_function(builtin_fn!("sub", |x: num, y: num| builtin::safe_sub))
+        .with_function(builtin_fn!("mul", |x: num, y: num| builtin::safe_mul))
+        .with_function(builtin_fn!("div", |x: num, y: num| builtin::safe_div))
+        .with_function(builtin_fn!("pow", |x: num, y: num| builtin::safe_pow))
+        .with_function(builtin_fn!("eq", |x: num, y: num| builtin::safe_eq))
+        .with_function(builtin_fn!("ne", |x: num, y: num| builtin::safe_ne))
+        .with_function(builtin_fn!("lt", |x: num, y: num| builtin::safe_lt))
+        .with_function(builtin_fn!("le", |x: num, y: num| builtin::safe_le))
+        .with_function(builtin_fn!("gt", |x: num, y: num| builtin::safe_gt))
+        .with_function(builtin_fn!("ge", |x: num, y: num| builtin::safe_ge))
+        .with_function(builtin_fn!("not", |x: int| builtin::safe_not))
+        .with_function(builtin_fn!("and", |x: int, y: int| builtin::safe_and))
+        .with_function(builtin_fn!("or", |x: int, y: int| builtin::safe_or))
+        .with_function(builtin_fn!("bit_not", |x: num| builtin::safe_bit_not))
+        .with_function(builtin_fn!("bit_or", |x: num, y: int| builtin::safe_bit_or))
+        .with_function(builtin_fn!("bit_and", |x: num, y: int| builtin::safe_bit_and))
+        .with_function(builtin_fn!("bit_shl", |x: num, y: int| builtin::safe_bit_shl))
+        .with_function(builtin_fn!("bit_shr", |x: num, y: int| builtin::safe_bit_shr))
+        .with_function(builtin_fn!("typeof", |&ctx, v: any| Ok(Value::from(
+            v.ty().to_string()
+        ))));
 }
 
 fn take_arg<T: CastFrom<Value>>(

@@ -39,7 +39,7 @@ impl Module {
             name,
             names: NameTable::new(),
             dimensions: DimensionTable::new(),
-            operators: OperatorTable::new(),
+            operators: OperatorTable::new_with_builtins(),
             units: UnitTable::new(),
         }
     }
@@ -197,7 +197,14 @@ impl ModuleMap {
         self.module_tree.len()
     }
 
-    pub fn get_module(&mut self, path: impl PathLike) -> Result<&mut Module, NameError> {
+    pub fn get_module(&self, path: impl PathLike) -> Result<&Module, NameError> {
+        self.module_tree
+            .get(path)
+            .map(|(module, _)| module)
+            .map_err(|spanned| NameError::new("invalid module", spanned))
+    }
+
+    pub fn get_module_mut(&mut self, path: impl PathLike) -> Result<&mut Module, NameError> {
         self.module_tree
             .get_mut(path)
             .map(|(module, _)| module)
@@ -221,7 +228,6 @@ impl ModuleMap {
             .module_tree
             .get_or_insert(path)
             .map_err(|spanned| NameError::new("invalid module", spanned))?;
-
         if index == next_index {
             self.module_to_index.insert(module.id, index);
         }

@@ -1,9 +1,8 @@
 use crate::ast::SourceSpan;
 use crate::diag::{Error, IntoError, IntoErrorCtx};
 use crate::id::{ModuleId, SourceId};
-use crate::print::ansi::{GREEN, RESET, YELLOW};
 use crate::print::{PrettyPrint, PrettyString};
-use crate::runtime::{builtin, Context};
+use crate::runtime::{builtin, Context, Value};
 
 use crate::interp;
 use crate::lexer;
@@ -21,7 +20,7 @@ pub fn eval_source(
     ctx: &mut Context,
     source_id: SourceId,
     module_id: ModuleId,
-) -> Result<(), Error> {
+) -> Result<Option<Value>, Error> {
     let tokens = match lexer::lex(source_id, ctx.sources[source_id].raw()) {
         Ok(tokens) => tokens,
         Err(err) => return err.into_error_result(),
@@ -56,14 +55,7 @@ pub fn eval_source(
     }
 
     match interp::interpret(ctx, &mut module) {
-        Ok(value) => {
-            if let Some(value) = value {
-                println!("{GREEN}RESULT:{RESET} {}", value.pretty_string(&ctx));
-            } else {
-                println!("{GREEN}RESULT:{RESET} {YELLOW}None{RESET}");
-            }
-            Ok(())
-        }
+        Ok(value) => Ok(value),
         Err(err) => Err(err.into_error_ctx(&ctx)),
     }
 }

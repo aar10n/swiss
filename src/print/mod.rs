@@ -134,3 +134,14 @@ impl<L: PrettyPrint<Ctx, Info>, R: PrettyPrint<Ctx, Info>, Ctx, Info: Clone> Pre
         }
     }
 }
+
+impl<Ctx, Info: Clone> PrettyPrint<Ctx, Info> for String {
+    fn pretty_print<Output: io::Write>(
+        &self,
+        out: &mut Output,
+        _: &Ctx,
+        _: Info,
+    ) -> io::Result<()> {
+        write!(out, "{}", self)
+    }
+}

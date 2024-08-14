@@ -34,6 +34,16 @@ impl Operator {
         }
     }
 
+    pub fn new_builtin(name: &str, kind: OpKind, assoc: OpAssoc, prec: isize) -> Self {
+        Self {
+            name: Spanned::from(Ustr::from(name)),
+            kind,
+            assoc,
+            prec,
+            func: Left(Path::new(vec![])),
+        }
+    }
+
     pub fn is_right(&self) -> bool {
         self.assoc == OpAssoc::Right
     }
@@ -54,6 +64,17 @@ impl OperatorTable {
             op_map: HashMap::new(),
             op_starters: HashMap::new(),
         }
+    }
+
+    pub fn new_with_builtins() -> Self {
+        let mut table = Self::new();
+        table.insert(Operator::new_builtin(
+            "=",
+            OpKind::Infix,
+            OpAssoc::Right,
+            isize::MIN,
+        ));
+        table
     }
 
     pub fn insert(&mut self, op: Operator) {

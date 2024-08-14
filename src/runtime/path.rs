@@ -222,6 +222,7 @@ impl TreeNode {
 // MARK: PathLike
 
 pub trait PathLike: Sized + Clone {
+    fn len(&self) -> usize;
     fn is_empty(&self) -> bool;
     fn parts(&self) -> SmallVec<[Spanned<Ustr>; 4]>;
     fn dir_parts(&self) -> SmallVec<[Spanned<Ustr>; 4]>;
@@ -234,6 +235,9 @@ pub trait PathLike: Sized + Clone {
 }
 
 impl PathLike for &str {
+    fn len(&self) -> usize {
+        self.split("::").count()
+    }
     fn is_empty(&self) -> bool {
         self.is_empty()
     }
@@ -254,6 +258,9 @@ impl PathLike for &str {
 }
 
 impl PathLike for Spanned<Ustr> {
+    fn len(&self) -> usize {
+        self.raw.split("::").count()
+    }
     fn is_empty(&self) -> bool {
         false
     }
@@ -275,6 +282,9 @@ impl<A> PathLike for SmallVec<A>
 where
     A: Array<Item = Spanned<Ustr>>,
 {
+    fn len(&self) -> usize {
+        self.len()
+    }
     fn is_empty(&self) -> bool {
         self.is_empty()
     }
@@ -293,6 +303,9 @@ where
 }
 
 impl PathLike for Vec<Spanned<Ustr>> {
+    fn len(&self) -> usize {
+        self.len()
+    }
     fn is_empty(&self) -> bool {
         self.is_empty()
     }

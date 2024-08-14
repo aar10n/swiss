@@ -4,8 +4,10 @@
 
 // types:
 //   any
-//   int
+//   bool
 //   float
+//   int
+//   str
 //   num
 
 #[associativity="left"]
@@ -65,10 +67,18 @@ infix operator (^)(num,num) = builtin::pow
 //  henry     | H  | inductance
 //  degree C  | °C | temperature
 
+dimension T // time
+dimension L // length
+dimension M // mass
+dimension A // current
+dimension Θ // temperature
 dimension N // amount of substance
 dimension J // luminous intensity
+dimension V = T^-3 L^2 M A^-1
+dimension F = M^-1 L^-2 T^4 A^2
+dimension Ω = M L^2 T^-3 A^-2
+dimension H = L^2 M T^-2 A^-2
 
-dimension T // time
 base unit second{s} = T
 unit picosecond{ps} [T] = 1.2e-12
 unit nanosecond{ns} [T] = 1e-9
@@ -81,7 +91,6 @@ unit week{wk} [T] = 604800
 unit month{mo} [T] = 2629746
 unit year{yr} [T] = 31556952
 
-dimension L // length
 base unit meter{m} = L
 unit millimeter{mm} [L] = 1e-3
 unit centimeter{cm} [L] = 1e-2
@@ -91,17 +100,14 @@ unit foot{ft} [L] = 0.3048
 unit yard{yd} [L] = 0.9144
 unit mile{mi} [L] = 1609.34
 
-dimension M // mass
 base unit kilogram{kg} = M
 unit gram{g} [M] = 1e-3
 unit tonne{t} [M] = 1e3
 
-dimension I // current
-base unit ampere{A} = I
-unit milliampere{mA} [I] = 1e-3
-unit microampere{μA,uA} [I] = 1e-6
+base unit ampere{I} = A
+unit milliampere{mA} [A] = 1e-3
+unit microampere{μA,uA} [A] = 1e-6
 
-dimension Θ // temperature
 base unit kelvin{K} = Θ
 unit degreeC{dC} [Θ] = 1
 unit degreeF{dF} [Θ] = 5/9
@@ -111,25 +117,21 @@ unit kilohertz{kHz} [1/T] = 1e3
 unit megahertz{MHz} [1/T] = 1e6
 unit gigahertz{GHz} [1/T] = 1e9
 
-dimension V = T^-3 L^2 M I^-1
 base unit volt{V} = V
 unit millivolt{mV} [V] = 1e-3
 unit kilovolt{kV} [V] = 1e3
 
-dimension F = M^-1 L^-2 T^4 I^2
 base unit farad{F} = F
 unit millifarad{mF} [F] = 1e-3
 unit microfarad{μF,uF} [F] = 1e-6
 unit nanofarad{nF} [F] = 1e-9
 unit picofarad{pF} [F] = 1e-12
 
-dimension Ω = M L^2 T^-3 I^-2
 base unit ohm{Ω,R} = Ω
 unit milliohm{mΩ,mR} [Ω] = 1e-3
 unit kiloohm{kΩ,kR} [Ω] = 1e3
 unit megaohm{MΩ,MR} [Ω] = 1e6
 
-dimension H = L^2 M T^-2 I^-2
 base unit henry{H} = H
 unit millihenry{mH} [H] = 1e-3
 unit microhenry{μH,uH} [H] = 1e-6

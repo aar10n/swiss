@@ -11,3 +11,8 @@ unit week{wk} [T] = 604800
 infix operator (*) = builtin::mul
 
 fn min(a, b) { if a < b { a } else { b } }
+
+
+(1, 2) // tuple(int, int)
+
+[1, 2, 3.0] // list

@@ -11,6 +11,17 @@ use std::io;
 
 type Context = ();
 
+impl<T: PrettyPrint<Context>> PrettyPrint<Context> for Spanned<T> {
+    fn pretty_print<Output: io::Write>(
+        &self,
+        out: &mut Output,
+        ctx: &Context,
+        level: usize,
+    ) -> io::Result<()> {
+        self.value().pretty_print(out, ctx, level)
+    }
+}
+
 impl<T: PrettyPrint<Context>> PrettyPrint<Context> for KindNode<T> {
     fn pretty_print<Output: io::Write>(
         &self,
@@ -37,7 +48,7 @@ impl<T: PrettyPrint<Context>> PrettyPrint<Context> for ListNode<T> {
         let tab = TABWIDTH.repeat(level);
         out.write_all(tab.as_bytes())?;
 
-        if let Some((ldelim, _)) = &self.ldelim {
+        if let Some((ldelim, _)) = self.ldelim {
             write!(out, "{PUNCT}{}{RESET}", ldelim)?;
         }
         for (i, item) in self.items.iter().enumerate() {
@@ -46,7 +57,7 @@ impl<T: PrettyPrint<Context>> PrettyPrint<Context> for ListNode<T> {
                 write!(out, "{COMMA} ")?;
             }
         }
-        if let Some((rdelim, _)) = &self.rdelim {
+        if let Some((rdelim, _)) = self.rdelim {
             write!(out, "{PUNCT}{}{RESET}", rdelim)?;
         }
         Ok(())
@@ -357,9 +368,31 @@ impl PrettyPrint<Context> for Expr {
                 }
                 write!(out, ")")
             }
+            ExprKind::List(list) => {
+                write!(out, "{LBRAC}")?;
+                for (i, item) in list.items.iter().enumerate() {
+                    item.pretty_print(out, ctx, 0)?;
+                    if i < list.items.len() - 1 {
+                        write!(out, ", ")?;
+                    }
+                }
+                write!(out, "{RBRAC}")
+            }
+            ExprKind::Tuple(tuple) => {
+                write!(out, "{LPARN}")?;
+                for (i, item) in tuple.items.iter().enumerate() {
+                    item.pretty_print(out, ctx, 0)?;
+                    if i < tuple.items.len() - 1 {
+                        write!(out, ", ")?;
+                    }
+                }
+                write!(out, "{RPARN}")
+            }
             ExprKind::Path(path) => path.pretty_print(out, ctx, level),
             ExprKind::Ident(ident) => ident.pretty_print(out, ctx, level),
             ExprKind::Number(number) => number.pretty_print(out, ctx, level),
+            ExprKind::String(string) => write!(out, "{STRING}\"{}\"{RESET}", string),
+            ExprKind::Boolean(boolean) => write!(out, "{NUMBER}{}{RESET}", boolean),
         }
     }
 }

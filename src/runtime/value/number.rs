@@ -76,3 +76,25 @@ impl<Ctx> PrettyPrint<Ctx> for Number {
         }
     }
 }
+
+impl From<Integer> for Number {
+    fn from(value: Integer) -> Self {
+        Number::Int(value)
+    }
+}
+
+impl From<Float> for Number {
+    fn from(value: Float) -> Self {
+        Number::Float(value)
+    }
+}
+
+impl From<bool> for Number {
+    fn from(value: bool) -> Self {
+        if value {
+            Number::Int(Integer::from(1))
+        } else {
+            Number::Int(Integer::from(0))
+        }
+    }
+}

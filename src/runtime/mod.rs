@@ -6,7 +6,6 @@ mod module;
 mod name;
 mod operator;
 mod path;
-mod scope;
 mod unit;
 mod value;
 

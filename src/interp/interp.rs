@@ -3,10 +3,11 @@ use super::{InterpError, InterpResult, NameError, TypeError, Value};
 use crate::ast::*;
 use crate::diag::IntoError;
 use crate::print::{PrettyPrint, PrettyString};
-use crate::runtime::{self as rt, CastInto, Context, Function};
+use crate::runtime::{self as rt, CastInto, Context, Function, LocalScope, StackFrame};
 use crate::source::{SourceSpan, Spanned};
 
 use either::{Either, Left, Right};
+use smallvec::{smallvec, SmallVec};
 use ustr::Ustr;
 
 const TABWIDTH: &str = "    ";
@@ -63,7 +64,7 @@ impl<'ctx> Interpreter<'ctx> {
     }
 
     pub fn active_module(&mut self) -> &mut rt::Module {
-        self.ctx.active_module().unwrap()
+        self.ctx.active_module_mut().unwrap()
     }
 
     fn trace_debug(&self, msg: &str) {
@@ -75,7 +76,12 @@ impl<'ctx> Interpreter<'ctx> {
 }
 
 impl<'ctx> Interpreter<'ctx> {
-    fn invoke(&mut self, f: &Function, args: ListNode<Expr>) -> InterpResult<Value> {
+    fn invoke(
+        &mut self,
+        f: &Function,
+        args: ListNode<Expr>,
+        call_site: SourceSpan,
+    ) -> InterpResult<Value> {
         use rt::FunctionKind;
         self.trace_debug(&format!(
             "invoke function {}({})",
@@ -122,7 +128,7 @@ impl<'ctx> Interpreter<'ctx> {
             .into_iter()
             .zip(f.params.iter())
             .map(|(v, p)| (v, p.ty.clone().map_or(rt::Ty::Any, |ty| ty.raw)))
-            .map(|(v, p)| rt::coerce::to_ty(self.ctx, v, p))
+            .map(|(v, t)| rt::coerce::to_ty(self.ctx, v, t))
             .collect::<Vec<_>>();
 
         // invoke the function
@@ -130,7 +136,21 @@ impl<'ctx> Interpreter<'ctx> {
             FunctionKind::Native(builtin) => {
                 builtin(self.ctx, values).map_err(InterpError::from)?
             }
-            FunctionKind::Source(block) => Interp::<Value>::eval(block, self)?,
+            FunctionKind::Source(block) => {
+                let frame = StackFrame::new(f.name, call_site);
+                let mut scope = LocalScope::new();
+                for (value, param) in values.into_iter().zip(f.params.iter()) {
+                    scope.insert(param.name.raw, value);
+                }
+
+                self.ctx.push_frame(frame);
+                self.ctx.push_local_scope(scope);
+                let result = Interp::<Value>::eval(block, self);
+                self.ctx.pop_local_scope();
+                self.ctx.pop_frame();
+
+                result?
+            }
         })
     }
 }
@@ -354,7 +374,7 @@ impl<'ctx> Interp<'ctx, rt::DimExpr> for DimExpr {
                 DimExpr::Neg(expr.into())
             }
             DimExprKind::Ident(name) => {
-                let module = intrp.ctx.active_module().unwrap();
+                let module = intrp.ctx.active_module_mut().unwrap();
                 let dim = module
                     .resolve_dimension(name.as_spanned_ustr())
                     .map_err(InterpError::from)?;
@@ -376,17 +396,17 @@ impl<'ctx> Interp<'ctx, Value> for Expr {
                 ExprKind::InfixOp(op, lhs, rhs) => {
                     let func = op.eval(intrp)?;
                     let args = ListNode::from(vec![*lhs.clone(), *rhs.clone()]);
-                    intrp.invoke(&func, args)
+                    intrp.invoke(&func, args, op.span())
                 }
                 ExprKind::PrefixOp(op, expr) => {
                     let func = op.eval(intrp)?;
                     let args = ListNode::from(vec![*expr.clone()]);
-                    intrp.invoke(&func, args)
+                    intrp.invoke(&func, args, op.span())
                 }
                 ExprKind::PostfixOp(expr, op) => {
                     let func = op.eval(intrp)?;
                     let args = ListNode::from(vec![*expr.clone()]);
-                    intrp.invoke(&func, args)
+                    intrp.invoke(&func, args, op.span())
                 }
                 ExprKind::Unit(expr, op) => todo!("ExprKind::Unit"),
                 ExprKind::IfElse(cond, then, else_) => {
@@ -399,11 +419,29 @@ impl<'ctx> Interp<'ctx, Value> for Expr {
                 },
                 ExprKind::FnCall(func, args) => {
                     let func = Interp::<Function>::eval(func, intrp)?;
-                    intrp.invoke(&func, args.clone())
+                    intrp.invoke(&func, args.clone(), func.name.span())
+                },
+                ExprKind::List(node) => {
+                    let mut values = vec![];
+                    for item in node.iter() {
+                        let value = item.eval(intrp)?;
+                        values.push(value.into());
+                    }
+                    Ok(Value::List(values))
+                },
+                ExprKind::Tuple(node) => {
+                    let mut values = vec![];
+                    for item in node.iter() {
+                        let value = item.eval(intrp)?;
+                        values.push(value.into());
+                    }
+                    Ok(Value::Tuple(SmallVec::from_vec(values)))
                 },
                 ExprKind::Path(path) => Interp::<Value>::eval(path, intrp),
                 ExprKind::Ident(ident) => Interp::<Value>::eval(ident, intrp),
                 ExprKind::Number(num) => Interp::<rt::Number>::eval(num, intrp).map(Value::from),
+                ExprKind::String(s) => Ok(Value::String(s.clone())),
+                ExprKind::Boolean(b) => Ok(Value::Boolean(*b)),
             }
         }}
     }
@@ -426,7 +464,7 @@ impl<'ctx> Interp<'ctx, rt::Ty> for Ty {
 impl<'ctx> Interp<'ctx, Function> for Operator {
     fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<Function> {
         trace! {self, intrp, "Interp::<Function>::Operator", {
-            let module = intrp.ctx.active_module().unwrap();
+            let module = intrp.ctx.active_module_mut().unwrap();
 
             let op = module.resolve_operator(self.kind, self.as_spanned_ustr()).map_err(InterpError::from)?;
             match op.func.clone() {
@@ -440,13 +478,7 @@ impl<'ctx> Interp<'ctx, Function> for Operator {
 impl<'ctx> Interp<'ctx, Value> for Path {
     fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<Value> {
         trace! {self, intrp, "Interp::<Value>::Path", {
-            let name = self.name_part();
-            let module = intrp
-                .ctx.modules
-                .get_module(self.module_parts())?;
-
-            let constant = module.resolve_constant(name).map_err(InterpError::from)?;
-            Ok(constant.value.clone())
+            intrp.ctx.resolve_value(self.path_parts()).map_err(InterpError::from).cloned()
         }}
     }
 }
@@ -454,12 +486,7 @@ impl<'ctx> Interp<'ctx, Value> for Path {
 impl<'ctx> Interp<'ctx, Function> for Path {
     fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<Function> {
         trace! {self, intrp, "Interp::<Function>::Path", {
-            let name = self.name_part();
-            let module = intrp.ctx.modules.get_module(self.module_parts()).map_err(InterpError::from)?;
-            module
-                .resolve_function(name)
-                .map_err(InterpError::from)
-                .cloned()
+            intrp.ctx.resolve_function(self.path_parts()).map_err(InterpError::from).cloned()
         }}
     }
 }
@@ -468,10 +495,7 @@ impl<'ctx> Interp<'ctx, Value> for Ident {
     fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<Value> {
         trace! {self, intrp, "Interp::<Value>::Ident", {
             let name = self.as_spanned_ustr();
-            let module = intrp.ctx.active_module().unwrap();
-
-            let constant = module.resolve_constant(name).map_err(InterpError::from)?;
-            Ok(constant.value.clone())
+            intrp.ctx.resolve_value(name).map_err(InterpError::from).cloned()
         }}
     }
 }
@@ -480,9 +504,7 @@ impl<'ctx> Interp<'ctx, Function> for Ident {
     fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<Function> {
         trace! {self, intrp, "Interp::<Function>::Ident", {
             let name = self.as_spanned_ustr();
-            let module = intrp.ctx.active_module().unwrap();
-
-            module.resolve_function(name).map_err(InterpError::from).cloned()
+            intrp.ctx.resolve_function(name).map_err(InterpError::from).cloned()
         }}
     }
 }

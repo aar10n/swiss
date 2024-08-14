@@ -52,3 +52,12 @@ pub struct StackFrame {
     pub function: Spanned<Ustr>,
     pub call_site: SourceSpan,
 }
+
+impl StackFrame {
+    pub fn new(function: Spanned<Ustr>, call_site: SourceSpan) -> Self {
+        Self {
+            function,
+            call_site,
+        }
+    }
+}

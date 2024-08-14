@@ -423,6 +423,18 @@ impl Expr {
         Self::new(ExprKind::IfElse(cond.into(), then, else_))
     }
 
+    pub fn fn_call(path: Path, args: ListNode<Expr>) -> Self {
+        Self::new(ExprKind::FnCall(path, args))
+    }
+
+    pub fn list(items: ListNode<Expr>) -> Self {
+        Self::new(ExprKind::List(items))
+    }
+
+    pub fn tuple(items: ListNode<Expr>) -> Self {
+        Self::new(ExprKind::Tuple(items))
+    }
+
     pub fn path(path: Path) -> Self {
         Self::new(ExprKind::Path(path))
     }
@@ -433,6 +445,14 @@ impl Expr {
 
     pub fn number(number: Number) -> Self {
         Self::new(ExprKind::Number(number))
+    }
+
+    pub fn string(string: String) -> Self {
+        Self::new(ExprKind::String(string))
+    }
+
+    pub fn boolean(value: bool) -> Self {
+        Self::new(ExprKind::Boolean(value))
     }
 }
 
@@ -450,12 +470,21 @@ pub enum ExprKind {
     IfElse(P<Expr>, ListNode<Expr>, ListNode<Expr>),
     /// A function call expression.
     FnCall(Path, ListNode<Expr>),
+
+    /// A list.
+    List(ListNode<Expr>),
+    /// A tuple.
+    Tuple(ListNode<Expr>),
     /// An identifier path.
     Path(Path),
     /// An identifier.
     Ident(Ident),
     /// A number.
     Number(Number),
+    /// A string
+    String(String),
+    /// A boolean.
+    Boolean(bool),
 }
 
 /// A type.
@@ -514,6 +543,13 @@ impl Path {
         }
 
         self.parts[..self.parts.len() - 1]
+            .iter()
+            .map(|ident| ident.as_spanned_ustr())
+            .collect()
+    }
+
+    pub fn path_parts(&self) -> SmallVec<[Spanned<Ustr>; 4]> {
+        self.parts
             .iter()
             .map(|ident| ident.as_spanned_ustr())
             .collect()
@@ -618,6 +654,10 @@ impl Number {
 
     pub fn float(value: rug::Float) -> Self {
         Self::new(NumberKind::Float(value))
+    }
+
+    pub fn from_bool(value: bool) -> Self {
+        Self::integer(rug::Integer::from(value as i32))
     }
 }
 
