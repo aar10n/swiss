@@ -103,6 +103,11 @@ const BRACK_DELIM: (Token, Token) = (Token::LDelim("["), Token::RDelim("]"));
     number ::= <integer> | <float>
 */
 
+enum ListSpacing {
+    Spaces,
+    AllowNewlines,
+}
+
 pub struct Parser<'a> {
     ctx: &'a mut rt::Module,
     config: ParserConfig,
@@ -242,7 +247,7 @@ impl<'a> Parser<'a> {
                     parser.expect(Token::AssignOp, "expected '='")?;
                     parser.consume_any(Token::Space);
 
-                    let arg = parser.parse_string_lit()?;
+                    let arg = parser.parse_string()?;
                     let behavior = match arg.as_str() {
                         "left" => BinaryCoercion::Left,
                         "right" => BinaryCoercion::Right,
@@ -262,7 +267,7 @@ impl<'a> Parser<'a> {
                     parser.expect(Token::AssignOp, "expected '='")?;
                     parser.consume_any(Token::Space);
 
-                    let arg = parser.parse_string_lit()?;
+                    let arg = parser.parse_string()?;
                     let behavior = match arg.as_str() {
                         "auto" => Coercion::Auto,
                         "never" => Coercion::Never,
@@ -280,7 +285,7 @@ impl<'a> Parser<'a> {
                     parser.expect(Token::AssignOp, "expected '='")?;
                     parser.consume_any(Token::Space);
 
-                    let arg = parser.parse_string_lit()?;
+                    let arg = parser.parse_string()?;
                     let behavior = match arg.as_str() {
                         "trunc" => FloatConversion::Trunc,
                         "round" => FloatConversion::Round,
@@ -431,7 +436,7 @@ impl<'a> Parser<'a> {
             parser.expect(Token::RDelim(")"), "expected ')'")?;
             parser.consume_any(Token::Space);
 
-            let params = parser.parse_list(Token::Comma, PAREN_DELIM, |p| {
+            let params = parser.parse_list_one_or_more(Token::Comma, PAREN_DELIM, |p| {
                 if is_fn {
                     p.parse_op_fn_param()
                 } else {
@@ -468,7 +473,8 @@ impl<'a> Parser<'a> {
             let name = parser.parse_ident()?;
             parser.consume_any(Token::Space);
 
-            let params = parser.parse_list(Token::Comma, PAREN_DELIM, |p| p.parse_param())?;
+            let params = parser
+                .parse_list_zero_or_more(Token::Comma, PAREN_DELIM, false, |p| p.parse_param())?;
             parser.consume_any(Token::Space);
 
             let ret = if parser.peek_token() == &Token::LDelim("[") {
@@ -654,7 +660,10 @@ impl<'a> Parser<'a> {
                     Ok(expr)
                 }
             } else if parser.peek_token() == &Token::LDelim("[") {
-                let items = parser.parse_list(Token::Comma, BRACK_DELIM, |p| p.parse_expr(0))?;
+                let items =
+                    parser.parse_list_zero_or_more(Token::Comma, BRACK_DELIM, true, |p| {
+                        p.parse_expr(0)
+                    })?;
                 Ok(Expr::list(items))
             } else if is_prefix_op(parser.peek_token(), &parser.ctx) {
                 let operator = parser.parse_operator(OpKind::Prefix, /*is_decl=*/ false)?;
@@ -692,7 +701,10 @@ impl<'a> Parser<'a> {
             } else if parser.peek_token().is_identifier() {
                 let path = parser.parse_path()?;
                 if parser.peek_token() == &Token::LDelim("(") {
-                    let args = parser.parse_list(Token::Comma, PAREN_DELIM, |p| p.parse_expr(0))?;
+                    let args =
+                        parser.parse_list_zero_or_more(Token::Comma, PAREN_DELIM, false, |p| {
+                            p.parse_expr(0)
+                        })?;
                     Ok(Expr::fn_call(path, args))
                 } else {
                     Ok(Expr::path(path))
@@ -701,7 +713,7 @@ impl<'a> Parser<'a> {
                 let number = parser.parse_number()?;
                 Ok(Expr::number(number))
             } else if parser.peek_token().is_string() {
-                let string = parser.parse_string_lit()?.into_value();
+                let string = parser.parse_string()?.into_value();
                 Ok(Expr::string(string))
             } else if let Some((Token::Bool(b), _)) = parser.consume_if(Token::is_bool) {
                 Ok(Expr::boolean(b))
@@ -796,12 +808,13 @@ impl<'a> Parser<'a> {
         })
     }
 
-    // op_fn_param ::= <ident> _ '[' _ <dim_expr> _ ']'
+    // op_fn_param ::= <ident> _ ':' '[' _ <dim_expr> _ ']'
     //               | <ident> _ ':' _ <type>
     fn parse_op_fn_param(&mut self) -> ParseResult<Param> {
         self.span_and_trace("parse_op_fn_param", |parser| {
             let name = parser.parse_ident()?;
             parser.consume_any(Token::Space);
+            // parser.expect(Token::Colon, "expected ':'")?;
 
             let anno = if parser.consume_one(Token::LDelim("[")).is_some() {
                 parser.consume_any(Token::Space);
@@ -866,6 +879,7 @@ impl<'a> Parser<'a> {
 
             let ty = match raw_ty.as_str() {
                 "any" => Ty::any(),
+                "bool" => Ty::bool(),
                 "int" => Ty::int(),
                 "float" => Ty::float(),
                 "num" => Ty::num(),
@@ -970,19 +984,51 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_string_lit(&mut self) -> ParseResult<Spanned<String>> {
-        self.span_and_trace("parse_string_lit", |parser| {
+    fn parse_string(&mut self) -> ParseResult<Spanned<String>> {
+        self.span_and_trace("parse_string", |parser| {
             let (token, _) = parser.next_token()?;
             match token {
                 Token::String(s) => Ok(Spanned::from(s)),
-                _ => Err(SyntaxError::new("expected string literal", parser.position()).into()),
+                _ => Err(SyntaxError::new("expected string", parser.position()).into()),
             }
         })
     }
 
     //
 
-    fn parse_list<F, T>(
+    fn parse_list_zero_or_more<F, T>(
+        &mut self,
+        sep: Token,
+        delim: (Token, Token),
+        allow_newlines: bool,
+        f: F,
+    ) -> ParseResult<ListNode<T>>
+    where
+        T: Spannable + PrettyPrint<()> + std::fmt::Debug,
+        F: Fn(&mut Self) -> ParseResult<T>,
+    {
+        self.span_and_trace("parse_list_zero_or_more", |parser| {
+            parser.expect(delim.0.clone(), &format!("expected '{}'", delim.0))?;
+            parser.consume_space(allow_newlines);
+
+            let mut items = vec![];
+            while parser.peek_token() != &delim.1 {
+                parser.consume_space(allow_newlines);
+                items.push(f(parser)?);
+                parser.consume_space(allow_newlines);
+
+                if parser.peek_token() != &delim.1 {
+                    parser.expect(sep.clone(), &format!("expected '{}'", sep))?;
+                    parser.consume_space(allow_newlines);
+                }
+            }
+
+            parser.expect(delim.1.clone(), &format!("expected '{}'", delim.0))?;
+            Ok(ListNode::new(items))
+        })
+    }
+
+    fn parse_list_one_or_more<F, T>(
         &mut self,
         sep: Token,
         delim: (Token, Token),
@@ -992,7 +1038,7 @@ impl<'a> Parser<'a> {
         T: Spannable + PrettyPrint<()> + std::fmt::Debug,
         F: Fn(&mut Self) -> ParseResult<T>,
     {
-        self.span_and_trace("parse_list", |parser| {
+        self.span_and_trace("parse_list_one_or_more", |parser| {
             parser.expect(delim.0.clone(), &format!("expected '{}'", delim.0))?;
             parser.consume_any(Token::Space);
 
@@ -1161,6 +1207,15 @@ impl<'a> Parser<'a> {
         } else {
             None
         }
+    }
+
+    fn consume_space(&mut self, parse_newlines: bool) -> bool {
+        let mut consumed = self.consume_any(Token::Space);
+        if parse_newlines {
+            consumed |= self.consume_any(Token::NewLine);
+            consumed |= self.consume_any(Token::Space);
+        }
+        consumed
     }
 
     fn expect(&mut self, token: Token, msg: &str) -> ParseResult<(Token, SourceSpan)> {

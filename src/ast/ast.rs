@@ -495,6 +495,10 @@ impl Ty {
         Self::new(TyKind::Any)
     }
 
+    pub fn bool() -> Self {
+        Self::new(TyKind::Bool)
+    }
+
     pub fn int() -> Self {
         Self::new(TyKind::Int)
     }
@@ -506,14 +510,30 @@ impl Ty {
     pub fn num() -> Self {
         Self::new(TyKind::Num)
     }
+
+    pub fn str() -> Self {
+        Self::new(TyKind::Str)
+    }
+
+    pub fn list() -> Self {
+        Self::new(TyKind::List)
+    }
+
+    pub fn tuple(items: ListNode<Ty>) -> Self {
+        Self::new(TyKind::Tuple(items))
+    }
 }
 
 #[derive(Clone, Debug)]
 pub enum TyKind {
     Any,
+    Bool,
     Int,
     Float,
+    Str,
     Num,
+    List,
+    Tuple(ListNode<Ty>),
 }
 
 /// A path is a multi-part identifier specifiying an item in a module.

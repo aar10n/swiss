@@ -63,12 +63,11 @@ macro_rules! builtin_op {
 pub type NativeFn = fn(&mut Context, Vec<Value>) -> Result<Value, Exception>;
 
 pub fn register_builtin_module(ctx: &mut Context) {
-    #[rustfmt::skip]
     ctx.modules
         .new_module("builtin")
         .unwrap()
         .with_function(builtin_fn!("pos", |&ctx, x: num| Ok(x)))
-        .with_function(builtin_fn!("neg", |&ctx, x: num| Ok(-x)))
+        .with_function(builtin_fn!("neg", |x: num| builtin::safe_neg))
         .with_function(builtin_fn!("add", |x: num, y: num| builtin::safe_add))
         .with_function(builtin_fn!("sub", |x: num, y: num| builtin::safe_sub))
         .with_function(builtin_fn!("mul", |x: num, y: num| builtin::safe_mul))
@@ -85,9 +84,15 @@ pub fn register_builtin_module(ctx: &mut Context) {
         .with_function(builtin_fn!("or", |x: int, y: int| builtin::safe_or))
         .with_function(builtin_fn!("bit_not", |x: num| builtin::safe_bit_not))
         .with_function(builtin_fn!("bit_or", |x: num, y: int| builtin::safe_bit_or))
-        .with_function(builtin_fn!("bit_and", |x: num, y: int| builtin::safe_bit_and))
-        .with_function(builtin_fn!("bit_shl", |x: num, y: int| builtin::safe_bit_shl))
-        .with_function(builtin_fn!("bit_shr", |x: num, y: int| builtin::safe_bit_shr))
+        .with_function(builtin_fn!("bit_and", |&ctx, x: num, y: int| {
+            builtin::safe_bit_and(ctx, x, y)
+        }))
+        .with_function(builtin_fn!("bit_shl", |&ctx, x: num, y: int| {
+            builtin::safe_bit_shl(ctx, x, y)
+        }))
+        .with_function(builtin_fn!("bit_shr", |&ctx, x: num, y: int| {
+            builtin::safe_bit_shr(ctx, x, y)
+        }))
         .with_function(builtin_fn!("typeof", |&ctx, v: any| Ok(Value::from(
             v.ty().to_string()
         ))));

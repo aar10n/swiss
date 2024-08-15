@@ -101,7 +101,11 @@ impl SourceFile {
     /// Returns the line number/string pairs for all lines in the given span.
     pub fn lines_for_span(&self, span: &SourceSpan) -> Vec<(u32, &str)> {
         let (start_line, _) = self.decode_offset(span.start);
-        let (end_line, _) = self.decode_offset(span.end);
+        let (mut end_line, _) = self.decode_offset(span.end);
+        if span.len() == 1 && start_line != end_line {
+            end_line -= 1;
+        }
+
         (start_line..=end_line)
             .map(|line| (line, self.line_str(line).unwrap()))
             .collect()

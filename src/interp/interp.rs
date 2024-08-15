@@ -453,9 +453,16 @@ impl<'ctx> Interp<'ctx, rt::Ty> for Ty {
         no_trace! {self, intrp, "Interp::<Ty>::Ty", {
             Ok(match &self.kind {
                 TyKind::Any => Ty::Any,
+                TyKind::Bool => Ty::Bool,
                 TyKind::Int => Ty::Int,
                 TyKind::Float => Ty::Float,
+                TyKind::Str => Ty::Str,
                 TyKind::Num => Ty::Num,
+                TyKind::List => Ty::List,
+                TyKind::Tuple(tys) => {
+                    let tys = tys.eval(intrp)?.into_iter().map(|ty| Box::new(ty)).collect();
+                    Ty::Tuple(SmallVec::from_vec(tys))
+                },
             })
         }}
     }

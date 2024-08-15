@@ -408,9 +408,22 @@ impl PrettyPrint<Context> for Ty {
         out.write_all(tab.as_bytes())?;
         match &self.kind {
             TyKind::Any => write!(out, "{ATTR}any{RESET}"),
+            TyKind::Bool => write!(out, "{ATTR}bool{RESET}"),
             TyKind::Int => write!(out, "{ATTR}int{RESET}"),
             TyKind::Float => write!(out, "{ATTR}float{RESET}"),
+            TyKind::Str => write!(out, "{ATTR}string{RESET}"),
             TyKind::Num => write!(out, "{ATTR}num{RESET}"),
+            TyKind::List => write!(out, "{ATTR}list{RESET}"),
+            TyKind::Tuple(tys) => {
+                write!(out, "{LPARN}")?;
+                for (i, ty) in tys.iter().enumerate() {
+                    ty.pretty_print(out, ctx, 0)?;
+                    if i < tys.len() - 1 {
+                        write!(out, ", ")?;
+                    }
+                }
+                write!(out, "{RPARN}")
+            }
         }
     }
 }

@@ -1,1 +1,1 @@
-builtin::typeof((1, 2.5, true, Inf, "hello"))
+(1, 2, inf)
