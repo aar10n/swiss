@@ -1,4 +1,4 @@
-use super::{Dim, Exception, Number, Quantity, Ty};
+use super::{super::Context, Dim, Exception, Number, Quantity, Ty};
 
 use crate::print::ansi::{NUMBER, RESET};
 use crate::print::{PrettyPrint, PrettyString};
@@ -27,6 +27,10 @@ pub enum Value {
 }
 
 impl Value {
+    pub fn is_quantity(&self) -> bool {
+        matches!(self, Value::Quantity(_))
+    }
+
     pub fn is_zero(&self) -> bool {
         match &self {
             Value::Tuple(t) => t.is_empty(),
@@ -98,39 +102,39 @@ impl Default for Value {
     }
 }
 
-impl ToString for Value {
-    fn to_string(&self) -> String {
-        match &self {
-            Value::Tuple(tys) => {
-                let mut s = String::new();
-                s.push_str("(");
-                for (i, ty) in tys.iter().enumerate() {
-                    if i > 0 {
-                        s.push_str(", ");
-                    }
-                    s.push_str(&ty.to_string());
-                }
-                s.push_str(")");
-                s
-            }
-            Value::List(values) => {
-                let mut s = String::new();
-                s.push_str("[");
-                for (i, value) in values.iter().enumerate() {
-                    if i > 0 {
-                        s.push_str(", ");
-                    }
-                    s.push_str(&value.borrow().to_string());
-                }
-                s.push_str("]");
-                s
-            }
-            Value::Quantity(q) => q.to_string(),
-            Value::String(s) => s.clone(),
-            Value::Boolean(b) => b.to_string(),
-        }
-    }
-}
+// impl ToString for Value {
+//     fn to_string(&self) -> String {
+//         match &self {
+//             Value::Tuple(tys) => {
+//                 let mut s = String::new();
+//                 s.push_str("(");
+//                 for (i, ty) in tys.iter().enumerate() {
+//                     if i > 0 {
+//                         s.push_str(", ");
+//                     }
+//                     s.push_str(&ty.to_string());
+//                 }
+//                 s.push_str(")");
+//                 s
+//             }
+//             Value::List(values) => {
+//                 let mut s = String::new();
+//                 s.push_str("[");
+//                 for (i, value) in values.iter().enumerate() {
+//                     if i > 0 {
+//                         s.push_str(", ");
+//                     }
+//                     s.push_str(&value.borrow().to_string());
+//                 }
+//                 s.push_str("]");
+//                 s
+//             }
+//             Value::Quantity(q) => q.to_string(),
+//             Value::String(s) => s.clone(),
+//             Value::Boolean(b) => b.to_string(),
+//         }
+//     }
+// }
 
 impl<T: Into<Quantity>> From<T> for Value {
     fn from(value: T) -> Self {
@@ -150,11 +154,11 @@ impl From<bool> for Value {
     }
 }
 
-impl<Ctx> PrettyPrint<Ctx> for Value {
+impl PrettyPrint<Context> for Value {
     fn pretty_print<Output: std::io::Write>(
         &self,
         out: &mut Output,
-        ctx: &Ctx,
+        ctx: &Context,
         level: usize,
     ) -> std::io::Result<()> {
         match &self {

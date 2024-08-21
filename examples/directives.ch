@@ -7,9 +7,14 @@
 #[precedence=0]
 
 // Sets the precision used for floating point calculations. <u32>
-#[precision=0]
+#[float_precision=0]
 
-// Controls when type coercion is performed.
+// Controls how floats are converted to integers.
+//   trunc  - Truncate towards zero.
+//   round  - Round to the nearest integer.
+#[float_conversion="trunc"]
+
+// Controls type coercion.
 //   auto  - Coerce types automatically.
 //   never - Never coerce types.
 #[coercion="auto"]
@@ -21,7 +26,7 @@
 //   int_or_left   - If any side is an int, coerce the other side to it. (or left)
 #[binary_coercion="float_or_left"]
 
-// Controls how floats are converted to integers.
-//   trunc  - Truncate towards zero.
-//   round  - Round to the nearest integer.
-#[float_conversion="trunc"]
+// Controls from where the unit for results of quantity operations should be taken.
+//   left  - Take the unit from the left side.
+//   right - Take the unit from the right side.
+#[unit_preference="left"]

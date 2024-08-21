@@ -1,8 +1,6 @@
 use super::value::Number;
 
-use crate::ast::{NodeId, P};
-use crate::print::{PrettyPrint, PrettyString};
-use crate::source::{SourceSpan, Spanned};
+use crate::source::Spanned;
 
 use std::cmp::Ordering;
 use std::collections::HashMap;

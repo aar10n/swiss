@@ -1,6 +1,6 @@
 use super::{Context, Exception, Number};
 
-use crate::ast::P;
+use crate::ast::{UnitPreference, P};
 use crate::print::{PrettyPrint, PrettyString};
 
 use static_init::dynamic;
@@ -12,15 +12,15 @@ pub static NONE_DIM: Dim = Dim::new(DimExpr::one(), None);
 
 // MARK: Dim
 
-/// A dimension that may have a specific unit.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+/// A dimension contains a dimensional expression and optional unit information.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Dim {
     pub expr: DimExpr,
-    pub unit: Option<Ustr>,
+    pub unit: Option<(Ustr, Number)>,
 }
 
 impl Dim {
-    pub fn new(expr: DimExpr, unit: Option<Ustr>) -> Self {
+    pub fn new(expr: DimExpr, unit: Option<(Ustr, Number)>) -> Self {
         Self {
             expr: expr.normalize(),
             unit,
@@ -46,20 +46,29 @@ impl Dim {
             return Ok(b);
         } else if b.is_none() {
             return Ok(a);
+        } else if a.expr != b.expr {
+            return Err(Exception::new(
+                "TypeError: dimension mismatch",
+                format!("{} != {}", a.pretty_string(ctx), b.pretty_string(ctx)),
+            )
+            .with_backtrace(ctx.backtrace()));
         }
 
-        if a.expr == b.expr {
-            if a.unit.is_some() {
-                Ok(a)
-            } else {
-                Ok(b)
+        match ctx.config.unit_preference {
+            UnitPreference::Left => {
+                if a.unit.is_some() {
+                    Ok(a)
+                } else {
+                    Ok(b)
+                }
             }
-        } else {
-            Err(Exception::new(
-                "TypeError: dimension mismatch",
-                format!("{} != {}", a.pretty_string(&()), b.pretty_string(&())),
-            )
-            .with_backtrace(ctx.backtrace()))
+            UnitPreference::Right => {
+                if b.unit.is_some() {
+                    Ok(b)
+                } else {
+                    Ok(a)
+                }
+            }
         }
     }
 }
@@ -67,8 +76,8 @@ impl Dim {
 impl ToString for Dim {
     fn to_string(&self) -> String {
         match &self.unit {
-            Some(unit) => format!("{} {}", self.expr.to_string(), unit),
-            None => self.expr.to_string(),
+            Some(unit) => format!("{}", unit.0),
+            None => format!("[{}]", self.expr.to_string()),
         }
     }
 }
@@ -79,21 +88,21 @@ impl From<DimExpr> for Dim {
     }
 }
 
-impl From<(DimExpr, Ustr)> for Dim {
-    fn from((expr, unit): (DimExpr, Ustr)) -> Self {
-        Self::new(expr, Some(unit))
+impl From<(DimExpr, Ustr, Number)> for Dim {
+    fn from((expr, unit, scale): (DimExpr, Ustr, Number)) -> Self {
+        Self::new(expr, Some((unit, scale)))
     }
 }
 
-impl<Ctx> PrettyPrint<Ctx> for Dim {
+impl PrettyPrint<Context> for Dim {
     fn pretty_print<Output: std::io::Write>(
         &self,
         out: &mut Output,
-        ctx: &Ctx,
+        ctx: &Context,
         level: usize,
     ) -> std::io::Result<()> {
         match &self.unit {
-            Some(unit) => write!(out, "{} {}", self.expr.pretty_string(ctx), unit),
+            Some(unit) => write!(out, "{}", unit.0),
             None => self.expr.pretty_print(out, ctx, level),
         }
     }
@@ -115,6 +124,10 @@ pub enum DimExpr {
 impl DimExpr {
     pub fn one() -> DimExpr {
         DimExpr::Number(Number::Int(1.into()))
+    }
+
+    pub fn to_display_string(&self, ctx: &Context) -> String {
+        self.pretty_string(ctx)
     }
 
     pub fn normalize(self) -> DimExpr {
@@ -191,11 +204,11 @@ impl ToString for DimExpr {
     }
 }
 
-impl<Ctx> PrettyPrint<Ctx> for DimExpr {
+impl PrettyPrint<Context> for DimExpr {
     fn pretty_print<Output: std::io::Write>(
         &self,
         out: &mut Output,
-        ctx: &Ctx,
+        ctx: &Context,
         level: usize,
     ) -> std::io::Result<()> {
         match self {

@@ -299,6 +299,13 @@ impl<'a> Parser<'a> {
                     };
                     Directive::float_conversion(behavior)
                 }
+                "float_precision" => {
+                    parser.expect(Token::AssignOp, "expected '='")?;
+                    parser.consume_any(Token::Space);
+
+                    let prec = parser.parse_integer()?.to_u32_wrapping();
+                    Directive::float_precision(prec)
+                }
                 "precedence" => {
                     parser.expect(Token::AssignOp, "expected '='")?;
                     parser.consume_any(Token::Space);
@@ -307,12 +314,23 @@ impl<'a> Parser<'a> {
                     parser.config.precedence = prec;
                     Directive::precedence(prec)
                 }
-                "precision" => {
+                "unit_preference" => {
                     parser.expect(Token::AssignOp, "expected '='")?;
                     parser.consume_any(Token::Space);
 
-                    let prec = parser.parse_integer()?.to_u32_wrapping();
-                    Directive::precision(prec)
+                    let arg = parser.parse_string()?;
+                    let preference = match arg.as_str() {
+                        "left" => UnitPreference::Left,
+                        "right" => UnitPreference::Right,
+                        _ => {
+                            let err = ValueError::new(
+                                "expected one of: \"left\" or \"right\"",
+                                arg,
+                            );
+                            return Err(ParseError::from(err));
+                        }
+                    };
+                    Directive::unit_preference(preference)
                 }
                 _ => {
                     let (directive, span) = directive.into_pair();

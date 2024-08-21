@@ -82,7 +82,7 @@ fn evaluate(
     match driver::eval_source(ctx, source_id, module_id) {
         Ok(Some(value)) if print_result => Ok(println!(
             "{GREEN}RESULT:{RESET} {}",
-            value.pretty_string(&ctx)
+            value.pretty_string(ctx)
         )),
         Ok(None) if print_result => Ok(println!("{GREEN}RESULT:{RESET} {YELLOW}None{RESET}")),
         Ok(_) => Ok(()),

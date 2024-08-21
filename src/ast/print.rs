@@ -142,10 +142,15 @@ impl PrettyPrint<Context> for Directive {
                 "{DIRECTIVE}precedence{RESET}{EQUALS}{NUMBER}{}{RESET}",
                 prec,
             ),
-            DirectiveKind::Precision(prec) => write!(
+            DirectiveKind::FloatPrecision(prec) => write!(
                 out,
                 "{DIRECTIVE}precision{RESET}{EQUALS}{NUMBER}{}{RESET}",
                 prec,
+            ),
+            DirectiveKind::UnitPreference(preference) => write!(
+                out,
+                "{DIRECTIVE}unit_preference{RESET}{EQUALS}{IDENT}{:?}{RESET}",
+                preference
             ),
         }
     }

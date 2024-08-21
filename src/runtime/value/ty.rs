@@ -11,7 +11,7 @@ use smallvec::SmallVec;
 
 // MARK: Ty
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Ty {
     Any,
     Bool,
@@ -70,7 +70,7 @@ impl Ty {
             }
             _ => Err(Exception::new(
                 "TypeError: type mismatch",
-                format!("{} != {}", a.pretty_string(&()), b.pretty_string(&())),
+                format!("{} != {}", a.pretty_string(ctx), b.pretty_string(ctx)),
             )
             .with_backtrace(ctx.backtrace())),
         }
@@ -104,11 +104,11 @@ impl ToString for Ty {
     }
 }
 
-impl<Ctx> PrettyPrint<Ctx> for Ty {
+impl PrettyPrint<Context> for Ty {
     fn pretty_print<Output: std::io::Write>(
         &self,
         out: &mut Output,
-        ctx: &Ctx,
+        ctx: &Context,
         level: usize,
     ) -> std::io::Result<()> {
         match self {
@@ -155,7 +155,7 @@ impl CastInto<Quantity> for Value {
             Value::Quantity(q) => Ok(q),
             v => Err(Exception::new(
                 "ValueError: expected quantity",
-                format!("found {}", v.ty().pretty_string(&())),
+                format!("found {}", v.ty().pretty_string(ctx)),
             )
             .with_backtrace(ctx.backtrace())),
         }
@@ -172,14 +172,14 @@ impl CastInto<Number> for Value {
                 } else {
                     Err(Exception::new(
                         "ValueError: expected number",
-                        format!("found {}", q.ty().pretty_string(&())),
+                        format!("found {}", q.ty().pretty_string(ctx)),
                     )
                     .with_backtrace(ctx.backtrace()))
                 }
             }
             v => Err(Exception::new(
                 "ValueError: expected number",
-                format!("found {}", v.ty().pretty_string(&())),
+                format!("found {}", v.ty().pretty_string(ctx)),
             )),
         }
     }
@@ -194,7 +194,7 @@ impl CastInto<Integer> for Value {
             }
             value => Err(Exception::new(
                 "TypeError: expected integer",
-                format!("found {}", value.ty().pretty_string(&())),
+                format!("found {}", value.ty().pretty_string(ctx)),
             )
             .with_backtrace(ctx.backtrace())),
         }
@@ -209,7 +209,7 @@ impl CastInto<Float> for Value {
             }
             value => Err(Exception::new(
                 "TypeError: expected float",
-                format!("found {}", value.ty().pretty_string(&())),
+                format!("found {}", value.ty().pretty_string(ctx)),
             )
             .with_backtrace(ctx.backtrace())),
         }
@@ -279,7 +279,7 @@ impl TryCoerce<Float> for Value {
     fn coerce(ctx: &Context, value: Value) -> Value {
         match value {
             Value::Quantity(q) if q.is_dimless() => match q.number {
-                Number::Int(v) => Value::from(Float::with_val(ctx.config.precision, v)),
+                Number::Int(v) => Value::from(Float::with_val(ctx.config.float_precision, v)),
                 Number::Float(v) => Value::from(v),
             },
             value => value,

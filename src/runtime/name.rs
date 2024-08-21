@@ -34,11 +34,11 @@ impl Constant {
     }
 }
 
-impl<Ctx> PrettyPrint<Ctx> for Constant {
+impl PrettyPrint<Context> for Constant {
     fn pretty_print<Output: std::io::Write>(
         &self,
         out: &mut Output,
-        ctx: &Ctx,
+        ctx: &Context,
         level: usize,
     ) -> std::io::Result<()> {
         write!(out, "{BOLD}{}{RESET} {EQUALS} ", self.name.raw)?;
@@ -125,11 +125,11 @@ impl Function {
     }
 }
 
-impl<Ctx> PrettyPrint<Ctx> for Function {
+impl PrettyPrint<Context> for Function {
     fn pretty_print<Output: std::io::Write>(
         &self,
         out: &mut Output,
-        ctx: &Ctx,
+        ctx: &Context,
         level: usize,
     ) -> std::io::Result<()> {
         write!(out, "{BOLD}{}{RESET} {LPARN}", self.name.raw)?;
@@ -192,16 +192,16 @@ impl From<(Ustr, Option<Ty>)> for Param {
     }
 }
 
-impl<Ctx> PrettyPrint<Ctx> for Param {
+impl PrettyPrint<Context> for Param {
     fn pretty_print<Output: std::io::Write>(
         &self,
         out: &mut Output,
-        ctx: &Ctx,
+        ctx: &Context,
         level: usize,
     ) -> std::io::Result<()> {
         write!(out, "{IDENT}{}{RESET}", self.name.raw)?;
         if let Some(ty) = &self.ty {
-            write!(out, " {DIMENSION}{}{RESET}", ty.pretty_string(&()))?;
+            write!(out, " {DIMENSION}{}{RESET}", ty.pretty_string(ctx))?;
         }
         Ok(())
     }

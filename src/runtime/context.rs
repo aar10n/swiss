@@ -6,7 +6,7 @@ use super::unit::{Unit, UnitKind, UnitTable};
 use super::value::Value;
 use super::{builtin, Function, NameError};
 
-use crate::ast::{BinaryCoercion, Coercion, FloatConversion, NodeId, Path, P};
+use crate::ast::{BinaryCoercion, Coercion, FloatConversion, NodeId, Path, UnitPreference, P};
 use crate::source::{SourceId, SourceMap, SourceProvider, SourceSpan, Spanned};
 
 use std::cell::RefCell;
@@ -62,6 +62,10 @@ impl Context {
 
     pub fn backtrace(&self) -> Vec<StackFrame> {
         self.call_stack.clone()
+    }
+
+    pub fn last_frame(&self) -> Option<&StackFrame> {
+        self.call_stack.last()
     }
 
     pub fn push_frame(&mut self, frame: StackFrame) {
@@ -144,23 +148,30 @@ impl SourceProvider for Context {
 
 /// Runtime options.
 pub struct RuntimeConfig {
-    // The precision for floating-point numbers.
-    pub precision: u32,
-    /// Coercion behavior.
-    pub coercion: Coercion,
     /// Binary operand coercion behavior.
     pub binary_coercion: BinaryCoercion,
+    /// Coercion behavior.
+    pub coercion: Coercion,
+    /// Number of decimal places to display for floating-point numbers.
+    /// If `None`, the number is automatically formatted.
+    pub decimal_places: Option<u32>,
+    /// The precision used internally for floating-point numbers.
+    pub float_precision: u32,
     /// Float to integer conversion behavior.
     pub float_conversion: FloatConversion,
+    /// Result unit selection for binary operations.
+    pub unit_preference: UnitPreference,
 }
 
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
-            precision: 53,
-            coercion: Coercion::default(),
             binary_coercion: BinaryCoercion::default(),
+            coercion: Coercion::default(),
+            decimal_places: None,
+            float_precision: 53,
             float_conversion: FloatConversion::default(),
+            unit_preference: UnitPreference::Left,
         }
     }
 }

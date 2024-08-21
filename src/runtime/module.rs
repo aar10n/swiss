@@ -1,11 +1,10 @@
-use super::dimension::{Dimension, DimensionTable};
+use super::dimension::{DimExpr, Dimension, DimensionTable};
 use super::name::{Constant, Function, Name, NameResult, NameTable, Param};
 use super::operator::{OpAssoc, OpKind, Operator, OperatorTable};
 use super::path::{PathLike, PathTree};
 use super::unit::{Unit, UnitKind, UnitTable};
 use super::{DeclError, NameError};
 
-use crate::ast::*;
 use crate::id::module_id;
 use crate::source::{source_id, SourceFile, SourceId, SourceSpan, Spanned};
 
@@ -159,16 +158,16 @@ impl Module {
             .ok_or_else(|| NameError::new("undefined operator", name.to_string_inner()))
     }
 
-    pub fn resolve_unit(&self, name: Ident) -> Result<&Unit, NameError> {
-        self.units
-            .get(name.raw)
-            .ok_or_else(|| NameError::new("undefined unit", name.as_spanned_string()))
-    }
-
-    pub fn resolve_unit_suffix(&self, suffix: Ident) -> Result<&Unit, NameError> {
+    pub fn resolve_unit_suffix(&self, suffix: Spanned<Ustr>) -> Result<&Unit, NameError> {
         self.units
             .resolve_suffix(suffix.raw)
-            .ok_or_else(|| NameError::new("undefined unit", suffix.as_spanned_string()))
+            .ok_or_else(|| NameError::new("undefined unit", suffix.to_spanned_string()))
+    }
+
+    pub fn resolve_unit_expr(&self, expr: &DimExpr) -> Result<&Unit, NameError> {
+        self.units
+            .resolve_dimexpr(expr)
+            .ok_or_else(|| NameError::new("undefined unit", expr.to_string().into()))
     }
 }
 

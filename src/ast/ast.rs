@@ -91,12 +91,16 @@ impl Directive {
         Self::new(DirectiveKind::FloatConversion(behavior))
     }
 
+    pub fn float_precision(prec: u32) -> Self {
+        Self::new(DirectiveKind::FloatPrecision(prec))
+    }
+
     pub fn precedence(prec: isize) -> Self {
         Self::new(DirectiveKind::Precedence(prec))
     }
 
-    pub fn precision(prec: u32) -> Self {
-        Self::new(DirectiveKind::Precision(prec))
+    pub fn unit_preference(preference: UnitPreference) -> Self {
+        Self::new(DirectiveKind::UnitPreference(preference))
     }
 }
 
@@ -106,8 +110,9 @@ pub enum DirectiveKind {
     BinaryCoercion(BinaryCoercion),
     Coercion(Coercion),
     FloatConversion(FloatConversion),
+    FloatPrecision(u32),
     Precedence(isize),
-    Precision(u32),
+    UnitPreference(UnitPreference),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -161,6 +166,15 @@ impl Default for FloatConversion {
     fn default() -> Self {
         FloatConversion::Trunc
     }
+}
+
+/// Controls from where the unit for results of quantity operations should be taken.
+#[derive(Clone, Debug, PartialEq)]
+pub enum UnitPreference {
+    /// Prefer the left side.
+    Left,
+    /// Prefer the right side.
+    Right,
 }
 
 /// A dimension declaration.

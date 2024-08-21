@@ -7,6 +7,7 @@ use crate::runtime::{self as rt, CastInto, Context, Function, LocalScope, StackF
 use crate::source::{SourceSpan, Spanned};
 
 use either::{Either, Left, Right};
+use rug::{Float, Integer};
 use smallvec::{smallvec, SmallVec};
 use ustr::Ustr;
 
@@ -33,7 +34,7 @@ macro_rules! trace {
                 "[TRACE] {{{}}} {tab}{}: {}",
                 $intrp.trace_level,
                 $msg,
-                result.pretty_string(&())
+                result.pretty_string($intrp.ctx)
             );
         }
         result
@@ -132,10 +133,8 @@ impl<'ctx> Interpreter<'ctx> {
             .collect::<Vec<_>>();
 
         // invoke the function
-        Ok(match &f.kind {
-            FunctionKind::Native(builtin) => {
-                builtin(self.ctx, values).map_err(InterpError::from)?
-            }
+        let result = match &f.kind {
+            FunctionKind::Native(builtin) => builtin(self.ctx, values).map_err(InterpError::from),
             FunctionKind::Source(block) => {
                 let frame = StackFrame::new(f.name, call_site);
                 let mut scope = LocalScope::new();
@@ -149,9 +148,11 @@ impl<'ctx> Interpreter<'ctx> {
                 self.ctx.pop_local_scope();
                 self.ctx.pop_frame();
 
-                result?
+                result
             }
-        })
+        }?;
+
+        Ok(result)
     }
 }
 
@@ -167,7 +168,7 @@ pub(super) trait Interp<'ctx, T> {
 impl<'ctx, T, U> Interp<'ctx, Vec<U>> for ListNode<T>
 where
     T: Interp<'ctx, U> + PrettyPrint<()>,
-    U: PrettyPrint<()>,
+    U: PrettyPrint<Context>,
 {
     fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<Vec<U>> {
         no_trace! {self, intrp, "Interp::<U>::ListNode", {
@@ -209,7 +210,7 @@ impl<'ctx> Interp<'ctx, ()> for Directive {
     fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<()> {
         no_trace! {self, intrp, "Interp::<()>::Directive", {
             match &self.kind {
-                &DirectiveKind::Precision(prec) => intrp.ctx.config.precision = prec,
+                &DirectiveKind::FloatPrecision(prec) => intrp.ctx.config.float_precision = prec,
                 _ => (), // nothing to do for other directives, as they are used during parsing
             }
             Ok(())
@@ -408,7 +409,35 @@ impl<'ctx> Interp<'ctx, Value> for Expr {
                     let args = ListNode::from(vec![*expr.clone()]);
                     intrp.invoke(&func, args, op.span())
                 }
-                ExprKind::Unit(expr, op) => todo!("ExprKind::Unit"),
+                ExprKind::Unit(expr, unit) => {
+                    let value = expr.eval(intrp)?;
+
+                    use rt::Number;
+                    match value {
+                        Value::Quantity(q) => {
+                            let (name, scale, expr) = {
+                                let unit = intrp
+                                    .ctx
+                                    .active_module_mut()
+                                    .unwrap()
+                                    .resolve_unit_suffix(unit.span().into_spanned(unit.name))
+                                    .map_err(InterpError::from)?;
+
+                                (unit.name.raw, unit.scale.clone(), unit.dim_expr.clone())
+                            };
+
+                            let number = Number::safe_mul(intrp.ctx, q.number.clone(), scale.clone())?;
+                            let dim = (expr, name, scale).into();
+                            let quantity = (number, dim).into();
+                            Ok(Value::Quantity(quantity))
+                        }
+                        _ => Err(TypeError::new(
+                            format!("expected number"),
+                            expr.span().into_spanned("given value".to_string()),
+                        )
+                        .into()),
+                    }
+                }
                 ExprKind::IfElse(cond, then, else_) => {
                     let cond = cond.eval(intrp)?;
                     if !cond.is_zero() {
@@ -416,11 +445,11 @@ impl<'ctx> Interp<'ctx, Value> for Expr {
                     } else {
                         else_.eval(intrp)
                     }
-                },
+                }
                 ExprKind::FnCall(func, args) => {
                     let func = Interp::<Function>::eval(func, intrp)?;
                     intrp.invoke(&func, args.clone(), func.name.span())
-                },
+                }
                 ExprKind::List(node) => {
                     let mut values = vec![];
                     for item in node.iter() {
@@ -428,7 +457,7 @@ impl<'ctx> Interp<'ctx, Value> for Expr {
                         values.push(value.into());
                     }
                     Ok(Value::List(values))
-                },
+                }
                 ExprKind::Tuple(node) => {
                     let mut values = vec![];
                     for item in node.iter() {
@@ -436,7 +465,7 @@ impl<'ctx> Interp<'ctx, Value> for Expr {
                         values.push(value.into());
                     }
                     Ok(Value::Tuple(SmallVec::from_vec(values)))
-                },
+                }
                 ExprKind::Path(path) => Interp::<Value>::eval(path, intrp),
                 ExprKind::Ident(ident) => Interp::<Value>::eval(ident, intrp),
                 ExprKind::Number(num) => Interp::<rt::Number>::eval(num, intrp).map(Value::from),

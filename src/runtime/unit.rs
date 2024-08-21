@@ -1,6 +1,5 @@
 use super::context::Context;
-use super::dimension::DimExpr;
-use super::value::Number;
+use super::value::{DimExpr, Number};
 use super::Exception;
 
 pub use crate::ast::{NodeId, UnitKind};
@@ -60,21 +59,11 @@ impl Unit {
     }
 }
 
-impl<Ctx> PrettyPrint<Ctx> for Unit {
-    fn pretty_print<Output: std::io::Write>(
-        &self,
-        out: &mut Output,
-        ctx: &Ctx,
-        level: usize,
-    ) -> std::io::Result<()> {
-        write!(out, "{UNIT}{}{RESET}", self.name.raw)
-    }
-}
-
-/// A table that tracks units.
+/// A table that tracks base and sub-units.
 #[derive(Clone, Debug)]
 pub struct UnitTable {
     units: HashMap<Ustr, Unit>,
+    dimexprs: HashMap<String, Ustr>,
     suffixes: HashMap<Ustr, Ustr>,
 }
 
@@ -82,6 +71,7 @@ impl UnitTable {
     pub fn new() -> Self {
         Self {
             units: HashMap::new(),
+            dimexprs: HashMap::new(),
             suffixes: HashMap::new(),
         }
     }
@@ -92,6 +82,11 @@ impl UnitTable {
         for suffix in &unit.suffixes {
             self.suffixes.insert(suffix.raw.clone(), unit.name.raw);
         }
+
+        if unit.is_base() {
+            self.dimexprs
+                .insert(unit.dim_expr.normalized().to_string(), unit.name.raw);
+        }
     }
 
     pub fn get(&self, name: Ustr) -> Option<&Unit> {
@@ -100,6 +95,11 @@ impl UnitTable {
 
     pub fn resolve_suffix(&self, suffix: Ustr) -> Option<&Unit> {
         self.units.get(self.suffixes.get(&suffix)?)
+    }
+
+    pub fn resolve_dimexpr(&self, expr: &DimExpr) -> Option<&Unit> {
+        self.units
+            .get(self.dimexprs.get(&expr.normalized().to_string())?)
     }
 }
 
