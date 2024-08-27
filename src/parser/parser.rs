@@ -621,7 +621,7 @@ impl<'a> Parser<'a> {
                     parser.parse_operator(OpKind::Infix, /*is_decl=*/ false)?;
                     parser.consume_any(Token::Space);
 
-                    let rhs = parser.parse_expr(next_prec)?;
+                    let rhs = parser.parse_expr_term()?;
                     if op_name == "=" {
                         let bind = match lhs.into_bind_pat() {
                             Ok(bind) => bind,
@@ -635,7 +635,7 @@ impl<'a> Parser<'a> {
                         lhs = Expr::assign(bind, rhs);
                     } else if op_name == ":=" {
                         return Err(SyntaxError::new(
-                            "unexpected ':=' outside of for loop",
+                            "unexpected ':=' outside of for-range loop",
                             op_span.start_pos(),
                         )
                         .into());

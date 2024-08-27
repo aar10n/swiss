@@ -1,16 +1,16 @@
-// types:
-//   any   - any type
-//   int   - arbitrary precision integer
-//   float - arbitrary precision floating point
-//   num   - a numeric type (int or float)
-//
-// 
-// typed parameters:
-//   <param>:<type>
-//
-// dimension parameters:
-//   <param>:[<dim>]
-//
+; types:
+;   any   - any type
+;   int   - arbitrary precision integer
+;   float - arbitrary precision floating point
+;   num   - a numeric type (int or float)
+;
+; 
+; typed parameters:
+;   <param>:<type>
+;
+; dimension parameters:
+;   <param>:[<dim>]
+;
 
 fn min(a, b) { if a < b { a } else { b } }
 fn max(a, b) { if a > b { a } else { b } }

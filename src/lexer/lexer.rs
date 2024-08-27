@@ -89,12 +89,8 @@ impl<'a> Lexer<'a> {
             } else {
                 self.lex_identifier_or_similar()
             }
-        } else if ch == '/' {
-            match self.peek(1) {
-                '/' => self.lex_line_comment(),
-                '*' => self.lex_block_comment(),
-                _ => self.lex_operator(),
-            }
+        } else if ch == ';' {
+            self.lex_line_comment()
         } else if ch == '"' {
             self.lex_string()
         } else if is_operator_char(ch) {
@@ -299,30 +295,10 @@ impl<'a> Lexer<'a> {
     }
 
     fn lex_line_comment(&mut self) -> LexResult<Token> {
-        // // line comment
-        self.expect_take_one(|ch| ch == '/', "expected '/'")?;
-        self.expect_take_one(|ch| ch == '/', "expected '/'")?;
+        // ; line comment
+        self.expect_take_one(|ch| ch == ';', "expected ';'")?;
 
         let comment = self.take_while(|ch| ch != '\n');
-        Ok(Token::Comment(comment))
-    }
-
-    fn lex_block_comment(&mut self) -> LexResult<Token> {
-        // /* block
-        //    comment */
-        self.expect_take_one(|ch| ch == '/', "expected '/'")?;
-        self.expect_take_one(|ch| ch == '*', "expected '*'")?;
-
-        let mut comment = String::new();
-        while let Some(ch) = self.take_one() {
-            if ch == '*' && self.peek(0) == '/' {
-                self.take_one();
-                break;
-            }
-
-            comment.push(ch);
-        }
-
         Ok(Token::Comment(comment))
     }
 }

@@ -1,24 +1,24 @@
-// base units:
-//  second    | s  | time
-//  meter     | m  | length
-//  kilogram  | kg | mass
-//  ampere    | A  | current
-//  kelvin    | K  | temperature
-//
-//  hertz     | Hz | frequency
-//  volt      | V  | voltage
-//  farad     | F  | capacitance
-//  ohm       | Ω  | resistance
-//  henry     | H  | inductance
-//  degree C  | °C | temperature
+; base units:
+;  second    | s  | time
+;  meter     | m  | length
+;  kilogram  | kg | mass
+;  ampere    | A  | current
+;  kelvin    | K  | temperature
+;
+;  hertz     | Hz | frequency
+;  volt      | V  | voltage
+;  farad     | F  | capacitance
+;  ohm       | Ω  | resistance
+;  henry     | H  | inductance
+;  degree C  | °C | temperature
 
-dimension T // time
-dimension L // length
-dimension M // mass
-dimension I // current
-dimension Θ // temperature
-dimension N // amount of substance
-dimension J // luminous intensity
+dimension T ; time
+dimension L ; length
+dimension M ; mass
+dimension I ; current
+dimension Θ ; temperature
+dimension N ; amount of substance
+dimension J ; luminous intensity
 
 base unit second{s} = T
 unit picosecond{ps} [T] = 1.2e-12
@@ -82,26 +82,3 @@ unit millihenry{mH} [H] = 1e-3
 unit microhenry{μH,uH} [H] = 1e-6
 unit nanohenry{nH} [H] = 1e-9
 unit picohenry{pH} [H] = 1e-12
-
-/*
-base unit bit{b} = 1
-unit kilobit{kb} [b] = 1000
-unit megabit{Mb} [b] = 1000000
-unit gigabit{Gb} [b] = 1000000000
-unit terabit{Tb} [b] = 1000000000000
-
-// IEC
-base unit byte{B} = 8
-unit kibibyte{K,KiB} [B] = 1024 // 1 << 10
-unit mebibyte{M,MiB} [B] = 1048576 // 1 << 20
-unit gibibyte{G,GiB} [B] = 1073741824 // 1 << 30
-unit tebibyte{T,TiB} [B] = 1099511627776 // 1 << 40
-unit pebibyte{P,PiB} [B] = 1125899906842624 // 1 << 50
-
-// SI
-unit kilobyte{kB} [B] = 1e3
-unit megabyte{MB} [B] = 1e6
-unit gigabyte{GB} [B] = 1e9
-unit terabyte{TB} [B] = 1e12
-unit petabyte{PB} [B] = 1e15
-*/

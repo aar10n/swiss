@@ -133,7 +133,7 @@ impl<Ctx> PrettyPrint<Ctx> for Token {
             Token::Keyword(k) => write!(out, "Keyword {KEYWORD}{:?}{RESET}", k),
             Token::Operator(op) => write!(out, "Operator {OPERATOR}{}{RESET}", op),
             Token::Identifier(s) => write!(out, "Identifier {KEYWORD}{}{RESET}", s),
-            Token::Comment(_) => write!(out, "Comment {PUNCT}Comment{RESET}"),
+            Token::Comment(c) => write!(out, "Comment {PUNCT}{}{RESET}", c),
             Token::Directive(d) => write!(out, "Directive {DIRECTIVE}{:?}{RESET}", d),
             Token::LDelim(s) => write!(out, "LDelim {DELIM}{}{RESET}", s),
             Token::RDelim(s) => write!(out, "RDelim {DELIM}{}{RESET}", s),

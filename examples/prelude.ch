@@ -1,14 +1,14 @@
-//
-// MARK: Operators
-//
+;
+; MARK: Operators
+;
 
-// types:
-//   any
-//   bool
-//   float
-//   int
-//   str
-//   num
+; types:
+;   any
+;   bool
+;   float
+;   int
+;   str
+;   num
 
 #[associativity="left"]
 #[precedence=0]
@@ -26,14 +26,14 @@ infix operator (&&)(num,num) = builtin::and
 #[precedence=4]
 infix operator (<<)(num,num) = builtin::bit_shl
 infix operator (>>)(num,num) = builtin::bit_shr
-// ------------------------
+; ------------------------
 #[associativity="right"]
 #[precedence=5]
 prefix operator (+)(num) = builtin::pos
 prefix operator (-)(num) = builtin::neg
 prefix operator (!)(num) = builtin::not
 prefix operator (~)(num) = builtin::bit_not
-// ------------------------
+; ------------------------
 #[associativity="left"]
 #[precedence=6]
 infix operator (+)(num,num) = builtin::add
@@ -42,42 +42,42 @@ infix operator (|)(num,num) = builtin::bit_or
 #[precedence=7]
 infix operator (*)(num,num) = builtin::mul
 infix operator (/)(num,num) = builtin::div
-//infix operator (%)(num,num) = builtin::mod
+;infix operator (%)(num,num) = builtin::mod
 infix operator (&)(num,num) = builtin::bit_and
-// ------------------------
+; ------------------------
 #[precedence=8]
 infix operator (^)(num,num) = builtin::pow
 
 
-//
-// MARK: Units
-//
+;
+; MARK: Units
+;
 
-// base units:
-//  second    | s  | time
-//  meter     | m  | length
-//  kilogram  | kg | mass
-//  ampere    | A  | current
-//  kelvin    | K  | temperature
-//
-//  hertz     | Hz | frequency
-//  volt      | V  | voltage
-//  farad     | F  | capacitance
-//  ohm       | Ω  | resistance
-//  henry     | H  | inductance
-//  degree C  | °C | temperature
+; base units:
+;  second    | s  | time
+;  meter     | m  | length
+;  kilogram  | kg | mass
+;  ampere    | A  | current
+;  kelvin    | K  | temperature
+;
+;  hertz     | Hz | frequency
+;  volt      | V  | voltage
+;  farad     | F  | capacitance
+;  ohm       | Ω  | resistance
+;  henry     | H  | inductance
+;  degree C  | °C | temperature
 
-dimension T                     // time
-dimension L                     // length
-dimension M                     // mass
-dimension A                     // current
-dimension Θ                     // temperature
-dimension N                     // amount of substance
-dimension J                     // luminous intensity
-dimension V = T^-3 L^2 M A^-1   // voltage
-dimension F = M^-1 L^-2 T^4 A^2 // capacitance
-dimension Ω = M L^2 T^-3 A^-2   // resistance
-dimension H = L^2 M T^-2 A^-2   // inductance
+dimension T                     ; time
+dimension L                     ; length
+dimension M                     ; mass
+dimension A                     ; current
+dimension Θ                     ; temperature
+dimension N                     ; amount of substance
+dimension J                     ; luminous intensity
+dimension V = T^-3 L^2 M A^-1   ; voltage
+dimension F = M^-1 L^-2 T^4 A^2 ; capacitance
+dimension Ω = M L^2 T^-3 A^-2   ; resistance
+dimension H = L^2 M T^-2 A^-2   ; inductance
 
 base unit second{s} = T
 unit picosecond{ps} [T] = 1.2e-12
