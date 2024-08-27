@@ -413,7 +413,7 @@ impl<'a> Lexer<'a> {
 }
 
 fn is_identifier_char_start(ch: char) -> bool {
-    UnicodeXID::is_xid_start(ch)
+    UnicodeXID::is_xid_start(ch) || ch == '_'
 }
 
 fn is_identifier_char_continue(ch: char) -> bool {
