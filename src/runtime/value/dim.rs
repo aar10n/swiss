@@ -48,8 +48,12 @@ impl Dim {
             return Ok(a);
         } else if a.expr != b.expr {
             return Err(Exception::new(
-                "TypeError: dimension mismatch",
-                format!("{} != {}", a.pretty_string(ctx), b.pretty_string(ctx)),
+                "TypeError",
+                format!(
+                    "dimension mismatch: {} != {}",
+                    a.pretty_string(ctx),
+                    b.pretty_string(ctx)
+                ),
             )
             .with_backtrace(ctx.backtrace()));
         }

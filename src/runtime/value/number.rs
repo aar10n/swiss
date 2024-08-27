@@ -95,8 +95,8 @@ impl Number {
             })
             .ok_or_else(|| {
                 Exception::new(
-                    "TypeError: float to int conversion failed",
-                    "rounding failed".to_owned(),
+                    "TypeError",
+                    "rounding failed during conversion to int".to_owned(),
                 )
             }),
         }
@@ -263,27 +263,27 @@ impl Number {
     ) -> Result<Number, Exception> {
         let Some(b) = b.get_int().cloned() else {
             return Err(
-                Exception::new("TypeError", "non-integer shift count".to_owned())
+                Exception::new("TypeError", format!("non-integer shift count"))
                     .with_backtrace(ctx.backtrace()),
             );
         };
         if b < 0 {
             return Err(
-                Exception::new("ValueError", "negative shift count".to_owned())
+                Exception::new("ValueError", format!("negative shift count"))
                     .with_backtrace(ctx.backtrace()),
             );
         }
 
         let shift = b.to_u32().ok_or_else(|| {
-            Exception::new("ValueError: shift count too large", format!("{}", b))
+            Exception::new("ValueError", format!("shift count too large"))
                 .with_backtrace(ctx.backtrace())
         })?;
         let integer = match a {
             Number::Int(i) => Ok(i),
             _ => Err(Exception::new(
-                "TypeError: expected integer",
+                "TypeError",
                 format!(
-                    "got {} ({})",
+                    "expected integer, got {} ({})",
                     a.pretty_string(ctx),
                     a.ty().pretty_string(ctx)
                 ),

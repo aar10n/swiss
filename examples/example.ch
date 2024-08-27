@@ -1,1 +1,3 @@
-1 mm + 1.5 in + 0.5 in
+for (x, y) := [(1, 2), (3, 4)] {
+  builtin::debug((x, y))
+}

@@ -1,14 +1,12 @@
 mod interp;
-// mod unit;
-// mod value;
 
 use crate::ast::{Expr, Module};
 use crate::diag::{Error, IntoErrorCtx};
 use crate::print::PrettyString;
-use crate::runtime::{Context, DeclError, Exception, NameError, TypeError};
+use crate::runtime::{Context, DeclError, NameError, TypeError};
 use crate::source::{SourcePos, Spanned};
 
-pub use crate::runtime::{ModuleId, Value};
+pub use crate::runtime::{Exception, ModuleId, VRef, Value};
 use interp::Interp;
 pub use interp::*;
 
@@ -57,7 +55,7 @@ pub fn evaluate(ctx: &mut Context, expr: &Expr) -> Result<Value, Error> {
 }
 
 pub fn interpret(ctx: &mut Context, ast_module: &Module) -> InterpResult<Option<Value>> {
-    ctx.with_active_module(ast_module.module_id, |ctx| {
+    Context::with_active_module(ctx, ast_module.module_id, |ctx| {
         let mut interp = interp::Interpreter::new(ctx);
         let mut value = None;
         for item in &ast_module.items {

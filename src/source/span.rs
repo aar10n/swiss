@@ -53,6 +53,13 @@ impl SourceSpan {
         }
     }
 
+    pub fn union_with(&self, other: SourceSpan) -> SourceSpan {
+        assert_eq!(self.source_id, other.source_id);
+        let start = self.start.min(other.start);
+        let end = self.end.max(other.end);
+        SourceSpan::new(self.source_id, start, end)
+    }
+
     pub fn into_spanned<T>(self, value: T) -> Spanned<T> {
         Spanned {
             raw: value,

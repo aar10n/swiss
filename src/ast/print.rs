@@ -48,18 +48,18 @@ impl<T: PrettyPrint<Context>> PrettyPrint<Context> for ListNode<T> {
         let tab = TABWIDTH.repeat(level);
         out.write_all(tab.as_bytes())?;
 
-        if let Some((ldelim, _)) = self.ldelim {
-            write!(out, "{PUNCT}{}{RESET}", ldelim)?;
-        }
+        // if let Some((ldelim, _)) = self.ldelim {
+        //     write!(out, "{PUNCT}{}{RESET}", ldelim)?;
+        // }
         for (i, item) in self.items.iter().enumerate() {
             item.pretty_print(out, ctx, level)?;
             if i < self.items.len() - 1 {
                 write!(out, "{COMMA} ")?;
             }
         }
-        if let Some((rdelim, _)) = self.rdelim {
-            write!(out, "{PUNCT}{}{RESET}", rdelim)?;
-        }
+        // if let Some((rdelim, _)) = self.rdelim {
+        //     write!(out, "{PUNCT}{}{RESET}", rdelim)?;
+        // }
         Ok(())
     }
 }
@@ -242,14 +242,15 @@ impl PrettyPrint<Context> for FnDecl {
 
         write!(out, "{KIND}FnDecl{RESET} ")?;
         self.name.pretty_print(out, ctx, 0)?;
-        write!(out, " ")?;
+        write!(out, "{LPARN}")?;
         for param in self.params.iter() {
             param.pretty_print(out, ctx, 0)?;
             write!(out, " ")?;
         }
+        write!(out, "{RPARN}")?;
 
         if let Some(ret) = &self.ret {
-            write!(out, "{ARROW} {ATTR}{}{RESET}", ret.plain_string(ctx))?;
+            write!(out, " {ARROW} {ATTR}{}{RESET}", ret.plain_string(ctx))?;
         }
         writeln!(out)?;
 
@@ -303,6 +304,11 @@ impl PrettyPrint<Context> for Expr {
         let tab = TABWIDTH.repeat(level);
         out.write_all(tab.as_bytes())?;
         match &self.kind {
+            ExprKind::Assign(lhs, rhs) => {
+                lhs.pretty_print(out, ctx, 0)?;
+                write!(out, " {OPERATOR}={RESET} ")?;
+                rhs.pretty_print(out, ctx, 0)
+            }
             ExprKind::InfixOp(op, lhs, rhs) => {
                 write!(out, "{LPARN}")?;
                 lhs.pretty_print(out, ctx, 0)?;
@@ -328,8 +334,9 @@ impl PrettyPrint<Context> for Expr {
                 unit.pretty_print(out, ctx, 0)
             }
             ExprKind::IfElse(cond, then, else_) => {
-                write!(out, "{KEYWORD}If{RESET} ")?;
-                cond.pretty_print(out, ctx, 0)?;
+                writeln!(out, "{KEYWORD}If{RESET} ")?;
+                write!(out, "{tab}")?;
+                cond.pretty_print(out, ctx, level + 1)?;
                 writeln!(out)?;
 
                 if then.len() == 1 {
@@ -361,6 +368,14 @@ impl PrettyPrint<Context> for Expr {
                     }
                 }
                 Ok(())
+            }
+            ExprKind::ForRange(pat, iter, body) => {
+                write!(out, "{KEYWORD}For{RESET} ")?;
+                pat.pretty_print(out, ctx, 0)?;
+                write!(out, " {KEYWORD}range{RESET} ")?;
+                iter.pretty_print(out, ctx, 0)?;
+                writeln!(out)?;
+                body.pretty_print(out, ctx, level + 1)
             }
             ExprKind::FnCall(func, args) => {
                 func.pretty_print(out, ctx, 0)?;
@@ -398,6 +413,32 @@ impl PrettyPrint<Context> for Expr {
             ExprKind::Number(number) => number.pretty_print(out, ctx, level),
             ExprKind::String(string) => write!(out, "{STRING}\"{}\"{RESET}", string),
             ExprKind::Boolean(boolean) => write!(out, "{NUMBER}{}{RESET}", boolean),
+        }
+    }
+}
+
+impl PrettyPrint<Context> for BindPat {
+    fn pretty_print<Output: io::Write>(
+        &self,
+        out: &mut Output,
+        ctx: &Context,
+        level: usize,
+    ) -> io::Result<()> {
+        let tab = TABWIDTH.repeat(level);
+        out.write_all(tab.as_bytes())?;
+        match &self.kind {
+            BindPatKind::Ignored => write!(out, "{ATTR}_{RESET}"),
+            BindPatKind::Var(ident) => ident.pretty_print(out, ctx, 0),
+            BindPatKind::Tuple(pats) => {
+                write!(out, "{LPARN}")?;
+                for (i, pat) in pats.iter().enumerate() {
+                    pat.pretty_print(out, ctx, 0)?;
+                    if i < pats.len() - 1 {
+                        write!(out, "{COMMA} ")?;
+                    }
+                }
+                write!(out, "{RPARN}")
+            }
         }
     }
 }
@@ -440,9 +481,9 @@ impl PrettyPrint<Context> for Param {
         &self,
         out: &mut Output,
         ctx: &Context,
-        level: usize,
+        _: usize,
     ) -> io::Result<()> {
-        self.name.pretty_print(out, ctx, level)?;
+        self.name.pretty_print(out, ctx, 0)?;
         match &self.anno {
             Some(Either::Left(dim)) => {
                 write!(out, "{LBRAC}")?;
@@ -464,13 +505,13 @@ impl PrettyPrint<Context> for Path {
         &self,
         out: &mut Output,
         ctx: &Context,
-        level: usize,
+        _: usize,
     ) -> io::Result<()> {
         for (i, ident) in self.parts.iter().enumerate() {
             if i > 0 {
                 write!(out, "{IDENT}::{RESET}")?;
             }
-            ident.pretty_print(out, ctx, level)?;
+            ident.pretty_print(out, ctx, 0)?;
         }
         Ok(())
     }
@@ -481,7 +522,7 @@ impl PrettyPrint<Context> for Ident {
         &self,
         out: &mut Output,
         ctx: &Context,
-        level: usize,
+        _: usize,
     ) -> io::Result<()> {
         write!(out, "{IDENT}{}{RESET}", self.raw)
     }

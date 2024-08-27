@@ -9,6 +9,7 @@ use super::{builtin, Function, NameError};
 use crate::ast::{BinaryCoercion, Coercion, FloatConversion, NodeId, Path, UnitPreference, P};
 use crate::source::{SourceId, SourceMap, SourceProvider, SourceSpan, Spanned};
 
+use smallvec::SmallVec;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::io;
@@ -48,18 +49,6 @@ impl Context {
             .map(|module_id| &mut self.modules[module_id])
     }
 
-    pub fn with_active_module<T>(
-        &mut self,
-        module_id: ModuleId,
-        f: impl FnOnce(&mut Self) -> T,
-    ) -> T {
-        let prev_module = self.active_module;
-        self.active_module = Some(module_id);
-        let result = f(self);
-        self.active_module = prev_module;
-        result
-    }
-
     pub fn backtrace(&self) -> Vec<StackFrame> {
         self.call_stack.clone()
     }
@@ -68,16 +57,12 @@ impl Context {
         self.call_stack.last()
     }
 
-    pub fn push_frame(&mut self, frame: StackFrame) {
-        self.call_stack.push(frame);
-    }
-
-    pub fn pop_frame(&mut self) {
-        self.call_stack.pop();
-    }
-
     pub fn local_scopes(&self) -> &[LocalScope] {
         &self.local_scopes
+    }
+
+    pub fn current_scope_mut(&mut self) -> Option<&mut LocalScope> {
+        self.local_scopes.last_mut()
     }
 
     pub fn push_local_scope(&mut self, scope: LocalScope) {
@@ -86,6 +71,57 @@ impl Context {
 
     pub fn pop_local_scope(&mut self) {
         self.local_scopes.pop();
+    }
+
+    //
+
+    pub fn with_active_module<T, Ctx>(
+        ctx: &mut Ctx,
+        module_id: ModuleId,
+        f: impl FnOnce(&mut Ctx) -> T,
+    ) -> T
+    where
+        Ctx: ContextProvider,
+    {
+        let prev_module = ctx.context().active_module;
+        ctx.context_mut().active_module = Some(module_id);
+        let result = f(ctx);
+        ctx.context_mut().active_module = prev_module;
+        result
+    }
+
+    pub fn with_scope<T, Ctx>(ctx: &mut Ctx, scope: LocalScope, f: impl FnOnce(&mut Ctx) -> T) -> T
+    where
+        Ctx: ContextProvider,
+    {
+        ctx.context_mut().push_local_scope(scope);
+        let result = f(ctx);
+        ctx.context_mut().pop_local_scope();
+        result
+    }
+
+    pub fn with_fn_call<T, Ctx>(
+        ctx: &mut Ctx,
+        frame: StackFrame,
+        scope: LocalScope,
+        f: impl FnOnce(&mut Ctx) -> T,
+    ) -> T
+    where
+        Ctx: ContextProvider,
+    {
+        ctx.context_mut().call_stack.push(frame);
+        ctx.context_mut().push_local_scope(scope);
+        let scope_offset = ctx.context_mut().local_scopes.len() - 1;
+        let result = f(ctx);
+
+        // pop any remaining scopes pushed during the function call
+        assert!(ctx.context().local_scopes.len() >= scope_offset);
+        while ctx.context().local_scopes().len() > scope_offset {
+            ctx.context_mut().pop_local_scope();
+        }
+
+        ctx.context_mut().call_stack.pop();
+        result
     }
 }
 
@@ -191,5 +227,34 @@ impl LocalScope {
 
     pub fn insert(&mut self, name: Ustr, value: Value) {
         self.vars.insert(name, value);
+    }
+
+    pub fn extend<I: Iterator<Item = (Ustr, Value)>>(&mut self, vars: I) {
+        self.vars.extend(vars);
+    }
+}
+
+impl<I: Iterator<Item = (Ustr, Value)>> From<I> for LocalScope {
+    fn from(vars: I) -> Self {
+        Self {
+            vars: vars.collect(),
+        }
+    }
+}
+
+// MARK: ContextProvider
+
+pub trait ContextProvider {
+    fn context(&self) -> &Context;
+    fn context_mut(&mut self) -> &mut Context;
+}
+
+impl ContextProvider for Context {
+    fn context(&self) -> &Context {
+        self
+    }
+
+    fn context_mut(&mut self) -> &mut Context {
+        self
     }
 }

@@ -17,6 +17,8 @@ macro_rules! builtin_type {
     (int) => { Integer };
     (float) => { Float };
     (num) => { Quantity };
+    (str) => { String };
+    (bool) => { bool };
 }
 
 #[rustfmt::skip]
@@ -25,6 +27,8 @@ macro_rules! builtin_ty {
     (float) => { Some(Ty::Float) };
     (num) => { Some(Ty::Num) };
     (any) => { Some(Ty::Any) };
+    (str) => { Some(Ty::Str) };
+    (bool) => { Some(Ty::Bool) };
 }
 
 macro_rules! builtin_params {
@@ -103,14 +107,12 @@ pub fn register_builtin_module(ctx: &mut Context) {
         .with_function(builtin_fn!("typeof", |&ctx, v: any| Ok(Value::from(
             v.ty().to_string()
         ))))
+        .with_function(builtin_fn!("print", |&ctx, v: str| {
+            println!("--> {}", v);
+            Ok(Value::default())
+        }))
         .with_function(builtin_fn!("debug", |&ctx, v: any| {
-            if let Some(frame) = ctx.last_frame() {
-                let src_ref = ctx.sources.lookup_span(frame.call_site).unwrap();
-                print!("[DEBUG] {{{}}}", src_ref.file_name());
-            } else {
-                print!("[DEBUG]     ");
-            }
-            println!("{:?}", v);
+            println!("[DEBUG] {:?}", v);
             Ok(v)
         }));
 }
@@ -122,7 +124,7 @@ fn take_arg<T: CastFrom<Value>>(
 ) -> Result<T, Exception> {
     if args.is_empty() {
         Err(
-            Exception::new("missing argument", format!("missing argument: {}", param))
+            Exception::new("TypeError", format!("missing argument: {}", param))
                 .with_backtrace(ctx.backtrace()),
         )
     } else {

@@ -6,6 +6,7 @@ mod module;
 mod name;
 mod operator;
 mod path;
+mod pattern;
 mod unit;
 mod value;
 
@@ -17,6 +18,7 @@ pub use exception::*;
 pub use module::*;
 pub use name::*;
 pub use operator::*;
+pub use pattern::*;
 pub use unit::*;
 pub use value::*;
 
@@ -37,7 +39,7 @@ impl DeclError {
 impl IntoError for DeclError {
     fn into_error(self) -> Error {
         let msg = format!(
-            "conflicting {} declaration for '{}'",
+            "DeclError: conflicting {} declaration for '{}'",
             self.kind,
             self.name.as_str()
         );
@@ -66,7 +68,7 @@ impl DirectiveError {
 
 impl IntoError for DirectiveError {
     fn into_error(self) -> Error {
-        let msg = format!("{} '{}'", self.problem, self.directive);
+        let msg = format!("DirectiveError: {} '{}'", self.problem, self.directive);
         Error::new(msg, self.span)
     }
 }
@@ -96,7 +98,7 @@ impl NameError {
 
 impl IntoError for NameError {
     fn into_error(self) -> Error {
-        let msg = format!("{} '{}'", self.problem, self.name.as_str());
+        let msg = format!("NameError: {} '{}'", self.problem, self.name.as_str());
         Error::new(msg, self.name.span)
     }
 }
@@ -127,7 +129,7 @@ impl TypeError {
 impl IntoError for TypeError {
     fn into_error(self) -> Error {
         let msg = format!(
-            "expected {}, found '{}'",
+            "TypeError: expected {}, found '{}'",
             self.expected,
             self.found.as_str()
         );
@@ -164,7 +166,7 @@ impl ValueError {
 
 impl IntoError for ValueError {
     fn into_error(self) -> Error {
-        let msg = format!("{}", self.problem);
+        let msg = format!("ValueError: {}", self.problem);
         let mut err = Error::new(msg, self.value.span);
         if let Some(extra) = self.extra {
             err = err.with_extra(extra, SourceSpan::INVALID);

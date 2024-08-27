@@ -54,9 +54,9 @@ pub struct SyntaxError {
 }
 
 impl SyntaxError {
-    pub fn new(msg: &str, pos: SourcePos) -> SyntaxError {
+    pub fn new<S: ToString>(msg: S, pos: SourcePos) -> SyntaxError {
         SyntaxError {
-            msg: String::from(msg),
+            msg: msg.to_string(),
             pos,
         }
     }
@@ -64,7 +64,7 @@ impl SyntaxError {
 
 impl IntoError for SyntaxError {
     fn into_error(self) -> Error {
-        Error::new(self.msg, self.pos.as_span())
+        Error::new(format!("SyntaxError: {}", self.msg), self.pos.as_span())
     }
 }
 

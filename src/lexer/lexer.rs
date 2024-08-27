@@ -274,13 +274,18 @@ impl<'a> Lexer<'a> {
 
         let token = if op == ':' {
             if self.peek(0) == ':' {
+                // ::
                 self.take_one();
-                Token::PathOp
+                Token::PathSep
+            } else if self.peek(0) == '=' {
+                // :=
+                self.take_one();
+                Token::RangeAssign
             } else {
                 Token::Colon
             }
         } else if op == '=' && !is_operator_char(self.peek(0)) {
-            Token::AssignOp
+            Token::Assign
         } else {
             Token::Operator(Ustr::from(&op.to_string()))
         };

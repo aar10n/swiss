@@ -36,10 +36,13 @@ impl Exception {
 
 impl IntoErrorCtx<Context> for Exception {
     fn into_error_ctx(self, ctx: &Context) -> Error {
-        let mut err = Error::new(self.message, SourceSpan::default());
+        let mut err = Error::new(
+            format!("Exception: {}", self.message),
+            SourceSpan::default(),
+        );
         for frame in self.backtrace {
             err = err.with_extra(
-                format!("in call to '{}'", frame.function.raw),
+                format!("  in call to '{}'", frame.function.raw),
                 frame.call_site,
             );
         }

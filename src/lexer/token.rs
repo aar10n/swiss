@@ -21,8 +21,9 @@ pub enum Token {
     RDelim(&'static str),
     DirectiveStart, // #[
     DirectiveEnd,   // ]
-    AssignOp,       // =
-    PathOp,         // ::
+    Assign,         // =
+    RangeAssign,    // :=
+    PathSep,        // ::
     Colon,          // :
     Comma,          // ,
     Space,          // ␣
@@ -64,7 +65,7 @@ impl Token {
     }
 
     pub fn is_operator(&self) -> bool {
-        matches!(self, Token::Operator(_) | Token::AssignOp | Token::Colon)
+        matches!(self, Token::Operator(_) | Token::Assign | Token::Colon)
     }
 
     pub fn is_identifier(&self) -> bool {
@@ -82,7 +83,7 @@ impl Token {
     pub fn get_operator(&self) -> Option<Ustr> {
         match self {
             Token::Operator(op) => Some(op.clone()),
-            Token::AssignOp => Some(Ustr::from("=")),
+            Token::Assign => Some(Ustr::from("=")),
             Token::Comma => Some(Ustr::from(",")),
             _ => None,
         }
@@ -105,8 +106,9 @@ impl Display for Token {
             Token::RDelim(s) => write!(f, "{}", s),
             Token::DirectiveStart => write!(f, "#["),
             Token::DirectiveEnd => write!(f, "]"),
-            Token::AssignOp => write!(f, "="),
-            Token::PathOp => write!(f, "::"),
+            Token::Assign => write!(f, "="),
+            Token::RangeAssign => write!(f, ":="),
+            Token::PathSep => write!(f, "::"),
             Token::Colon => write!(f, ":"),
             Token::Comma => write!(f, ","),
             Token::Space => write!(f, " "),
@@ -137,8 +139,9 @@ impl<Ctx> PrettyPrint<Ctx> for Token {
             Token::RDelim(s) => write!(out, "RDelim {DELIM}{}{RESET}", s),
             Token::DirectiveStart => write!(out, "DirectiveStart {PUNCT}#[{RESET}"),
             Token::DirectiveEnd => write!(out, "DirectiveEnd {PUNCT}] {RESET}"),
-            Token::AssignOp => write!(out, "AssignOp {OPERATOR}={RESET}"),
-            Token::PathOp => write!(out, "PathOp {OPERATOR}::{RESET}"),
+            Token::Assign => write!(out, "Assign {OPERATOR}={RESET}"),
+            Token::RangeAssign => write!(out, "RangeAssign {OPERATOR}:={RESET}"),
+            Token::PathSep => write!(out, "PathSep {OPERATOR}::{RESET}"),
             Token::Colon => write!(out, "Colon {PUNCT}:{RESET}"),
             Token::Comma => write!(out, "Comma {PUNCT},{RESET}"),
             Token::Space => write!(out, "{BOLD}Space{RESET}"),

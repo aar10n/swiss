@@ -271,6 +271,9 @@ impl Visit for Expr {
 
     fn walk<'a, V: Visitor<'a, S, E>, S: Default, E>(&mut self, visitor: &mut V) -> Result<S, E> {
         match &mut self.kind {
+            ExprKind::Assign(lhs, rhs) => {
+                todo!()
+            }
             ExprKind::InfixOp(op, lhs, rhs) => {
                 op.visit(visitor)?;
                 lhs.visit(visitor)?;
@@ -292,6 +295,12 @@ impl Visit for Expr {
                 cond.visit(visitor)?;
                 then.visit(visitor)?;
                 else_.visit(visitor)?;
+            }
+            ExprKind::ForRange(pat, iter, body) => {
+                todo!()
+                // pat.visit(visitor)?;
+                // iter.visit(visitor)?;
+                // body.visit(visitor)?;
             }
             ExprKind::FnCall(func, args) => {
                 func.visit(visitor)?;

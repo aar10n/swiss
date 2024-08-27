@@ -3,12 +3,16 @@ use super::{InterpError, InterpResult, NameError, TypeError, Value};
 use crate::ast::*;
 use crate::diag::IntoError;
 use crate::print::{PrettyPrint, PrettyString};
-use crate::runtime::{self as rt, CastInto, Context, Function, LocalScope, StackFrame};
+use crate::runtime::{
+    self as rt, CastInto, Context, ContextProvider, Function, LocalScope, StackFrame,
+};
 use crate::source::{SourceSpan, Spanned};
 
 use either::{Either, Left, Right};
 use rug::{Float, Integer};
 use smallvec::{smallvec, SmallVec};
+use std::cell::RefCell;
+use std::rc::Rc;
 use ustr::Ustr;
 
 const TABWIDTH: &str = "    ";
@@ -134,25 +138,35 @@ impl<'ctx> Interpreter<'ctx> {
 
         // invoke the function
         let result = match &f.kind {
-            FunctionKind::Native(builtin) => builtin(self.ctx, values).map_err(InterpError::from),
+            FunctionKind::Native(builtin) => {
+                let frame = StackFrame::new(f.name, call_site);
+                let scope = LocalScope::new();
+                Context::with_fn_call(self, frame, scope, |intrp| {
+                    builtin(intrp.ctx, values).map_err(InterpError::from)
+                })
+            }
             FunctionKind::Source(block) => {
                 let frame = StackFrame::new(f.name, call_site);
-                let mut scope = LocalScope::new();
-                for (value, param) in values.into_iter().zip(f.params.iter()) {
-                    scope.insert(param.name.raw, value);
-                }
+                let scope =
+                    LocalScope::from(f.params.iter().map(|p| p.name.raw).zip(values.into_iter()));
 
-                self.ctx.push_frame(frame);
-                self.ctx.push_local_scope(scope);
-                let result = Interp::<Value>::eval(block, self);
-                self.ctx.pop_local_scope();
-                self.ctx.pop_frame();
-
-                result
+                Context::with_fn_call(self, frame, scope, |intrp| {
+                    Interp::<Value>::eval(block, intrp)
+                })
             }
         }?;
 
         Ok(result)
+    }
+}
+
+impl ContextProvider for Interpreter<'_> {
+    fn context(&self) -> &Context {
+        self.ctx
+    }
+
+    fn context_mut(&mut self) -> &mut Context {
+        self.ctx
     }
 }
 
@@ -394,6 +408,15 @@ impl<'ctx> Interp<'ctx, Value> for Expr {
     fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<Value> {
         trace! {self, intrp, "Interp::<Value>::Expr", {
             match &self.kind {
+                ExprKind::Assign(lhs, rhs) => {
+                    let pat = lhs.eval(intrp)?;
+                    let value = rhs.eval(intrp)?;
+                    let bindings = pat.bind_with(intrp.ctx, value.clone())?;
+
+                    let scope = LocalScope::from(bindings.into_iter());
+                    intrp.ctx.push_local_scope(scope);
+                    Ok(value)
+                }
                 ExprKind::InfixOp(op, lhs, rhs) => {
                     let func = op.eval(intrp)?;
                     let args = ListNode::from(vec![*lhs.clone(), *rhs.clone()]);
@@ -446,9 +469,21 @@ impl<'ctx> Interp<'ctx, Value> for Expr {
                         else_.eval(intrp)
                     }
                 }
+                ExprKind::ForRange(pat, iter, body) => {
+                    let pat = pat.eval(intrp)?;
+                    let iter = iter.eval(intrp)?.into_list(intrp.ctx)?;
+                    for value in iter.borrow().iter().cloned() {
+                        let scope = LocalScope::from(pat.bind_with(intrp.ctx, value)?.into_iter());
+                        Context::with_scope(intrp, scope, |intrp| {
+                            Interp::<Value>::eval(body, intrp)
+                        })?;
+                    }
+                    Ok(Value::Empty)
+                }
                 ExprKind::FnCall(func, args) => {
+                    let span = func.span().union_with(args.span());
                     let func = Interp::<Function>::eval(func, intrp)?;
-                    intrp.invoke(&func, args.clone(), func.name.span())
+                    intrp.invoke(&func, args.clone(), span)
                 }
                 ExprKind::List(node) => {
                     let mut values = vec![];
@@ -456,7 +491,7 @@ impl<'ctx> Interp<'ctx, Value> for Expr {
                         let value = item.eval(intrp)?;
                         values.push(value.into());
                     }
-                    Ok(Value::List(values))
+                    Ok(Value::List(Rc::new(RefCell::new(values))))
                 }
                 ExprKind::Tuple(node) => {
                     let mut values = vec![];
@@ -472,6 +507,22 @@ impl<'ctx> Interp<'ctx, Value> for Expr {
                 ExprKind::String(s) => Ok(Value::String(s.clone())),
                 ExprKind::Boolean(b) => Ok(Value::Boolean(*b)),
             }
+        }}
+    }
+}
+
+impl<'ctx> Interp<'ctx, rt::Pattern> for BindPat {
+    fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<rt::Pattern> {
+        no_trace! {self, intrp, "Interp::<Pattern>::BindPat", {
+            use rt::Pattern;
+            Ok(match &self.kind {
+                BindPatKind::Ignored => Pattern::Ignore,
+                BindPatKind::Var(ident) => Pattern::Var(ident.as_spanned_ustr()),
+                BindPatKind::Tuple(pats) => {
+                    let pats = pats.eval(intrp)?;
+                    Pattern::Tuple(pats)
+                }
+            })
         }}
     }
 }

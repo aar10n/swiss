@@ -74,6 +74,12 @@ impl OperatorTable {
             OpAssoc::Right,
             isize::MIN,
         ));
+        table.insert(Operator::new_builtin(
+            ":=",
+            OpKind::Infix,
+            OpAssoc::Right,
+            isize::MIN,
+        ));
         table
     }
 

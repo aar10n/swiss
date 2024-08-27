@@ -1,4 +1,5 @@
-use super::{super::Context, Dim, Exception, Number, Quantity, Ty};
+use super::super::{Context, Exception};
+use super::{Dim, Number, Quantity, Ty};
 
 use crate::print::ansi::{NUMBER, RESET};
 use crate::print::{PrettyPrint, PrettyString};
@@ -7,23 +8,18 @@ use smallvec::SmallVec;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-pub type ValueRef = Rc<RefCell<Value>>;
-
-impl Into<ValueRef> for Value {
-    fn into(self) -> ValueRef {
-        Rc::new(RefCell::new(self))
-    }
-}
+pub type VRef<T> = Rc<RefCell<T>>;
 
 // MARK: Value
 
 #[derive(Clone, Debug)]
 pub enum Value {
     Tuple(SmallVec<[Box<Value>; 3]>),
-    List(Vec<ValueRef>),
+    List(VRef<Vec<Value>>),
     Quantity(Quantity),
     String(String),
     Boolean(bool),
+    Empty,
 }
 
 impl Value {
@@ -34,10 +30,11 @@ impl Value {
     pub fn is_zero(&self) -> bool {
         match &self {
             Value::Tuple(t) => t.is_empty(),
-            Value::List(l) => l.is_empty(),
+            Value::List(l) => l.borrow().is_empty(),
             Value::Quantity(q) => q.is_zero(),
             Value::String(s) => s.is_empty(),
             Value::Boolean(b) => !b,
+            Value::Empty => false,
         }
     }
 
@@ -51,15 +48,16 @@ impl Value {
                 }
             }
             Value::List(l) => {
-                if l.is_empty() {
+                if l.borrow().is_empty() {
                     false
                 } else {
-                    l.iter().all(|v| v.borrow().is_truthy())
+                    l.borrow().iter().all(|v| v.is_truthy())
                 }
             }
             Value::Quantity(q) => q.is_truthy(),
             Value::String(s) => !s.is_empty(),
             Value::Boolean(b) => *b,
+            Value::Empty => false,
         }
     }
 
@@ -92,49 +90,36 @@ impl Value {
             }
             Value::String(_) => Ty::Str,
             Value::Boolean(_) => Ty::Bool,
+            Value::Empty => Ty::Empty,
+        }
+    }
+
+    pub fn into_tuple(self, ctx: &Context) -> Result<SmallVec<[Box<Value>; 3]>, Exception> {
+        match self {
+            Value::Tuple(t) => Ok(t),
+            _ => Err(Exception::new(
+                "TypeError",
+                format!("expected tuple, got {}", self.ty().pretty_string(ctx)),
+            )),
+        }
+    }
+
+    pub fn into_list(self, ctx: &Context) -> Result<VRef<Vec<Value>>, Exception> {
+        match self {
+            Value::List(l) => Ok(l),
+            _ => Err(Exception::new(
+                "TypeError",
+                format!("expected list, got {}", self.ty().pretty_string(ctx)),
+            )),
         }
     }
 }
 
 impl Default for Value {
     fn default() -> Self {
-        Value::Quantity(Quantity::default())
+        Value::Empty
     }
 }
-
-// impl ToString for Value {
-//     fn to_string(&self) -> String {
-//         match &self {
-//             Value::Tuple(tys) => {
-//                 let mut s = String::new();
-//                 s.push_str("(");
-//                 for (i, ty) in tys.iter().enumerate() {
-//                     if i > 0 {
-//                         s.push_str(", ");
-//                     }
-//                     s.push_str(&ty.to_string());
-//                 }
-//                 s.push_str(")");
-//                 s
-//             }
-//             Value::List(values) => {
-//                 let mut s = String::new();
-//                 s.push_str("[");
-//                 for (i, value) in values.iter().enumerate() {
-//                     if i > 0 {
-//                         s.push_str(", ");
-//                     }
-//                     s.push_str(&value.borrow().to_string());
-//                 }
-//                 s.push_str("]");
-//                 s
-//             }
-//             Value::Quantity(q) => q.to_string(),
-//             Value::String(s) => s.clone(),
-//             Value::Boolean(b) => b.to_string(),
-//         }
-//     }
-// }
 
 impl<T: Into<Quantity>> From<T> for Value {
     fn from(value: T) -> Self {
@@ -174,17 +159,18 @@ impl PrettyPrint<Context> for Value {
             }
             Value::List(l) => {
                 write!(out, "[")?;
-                for (i, v) in l.iter().enumerate() {
+                for (i, v) in l.borrow().iter().enumerate() {
                     if i > 0 {
                         write!(out, ", ")?;
                     }
-                    v.borrow().pretty_print(out, ctx, level)?;
+                    v.pretty_print(out, ctx, level)?;
                 }
                 write!(out, "]")
             }
             Value::Quantity(q) => q.pretty_print(out, ctx, level),
             Value::String(s) => write!(out, "{:?}", s),
             Value::Boolean(b) => write!(out, "{}", b),
+            Value::Empty => write!(out, "()"),
         }
     }
 }

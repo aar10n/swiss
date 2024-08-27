@@ -23,7 +23,7 @@ pub const OPERATOR: &str = concatcp!(RED);
 pub const UNIT: &str = concatcp!(BOLD, BLUE);
 pub const IDENT: &str = concatcp!(YELLOW);
 pub const NUMBER: &str = concatcp!(GREEN);
-pub const STRING: &str = concatcp!(YELLOW);
+pub const STRING: &str = concatcp!(GREEN);
 pub const ATTR: &str = concatcp!(MAGENTA);
 
 pub mod chars {

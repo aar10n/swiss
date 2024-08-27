@@ -357,6 +357,22 @@ impl Param {
 /// A dimensional expression.
 pub type DimExpr = KindNode<DimExprKind>;
 
+#[derive(Clone, Debug)]
+pub enum DimExprKind {
+    /// A multiplication operation.
+    Mul(P<DimExpr>, P<DimExpr>),
+    /// A division operation.
+    Div(P<DimExpr>, P<DimExpr>),
+    /// An exponentiation operation.
+    Pow(P<DimExpr>, P<DimExpr>),
+    /// A negation operation.
+    Neg(P<DimExpr>),
+    /// An identifier.
+    Ident(Ident),
+    /// A number.
+    Number(Number),
+}
+
 impl DimExpr {
     pub fn mul(lhs: DimExpr, rhs: DimExpr) -> Self {
         Self::new(DimExprKind::Mul(lhs.into(), rhs.into()))
@@ -383,23 +399,6 @@ impl DimExpr {
     }
 }
 
-/// A dimensional expression kind.
-#[derive(Clone, Debug)]
-pub enum DimExprKind {
-    /// A multiplication operation.
-    Mul(P<DimExpr>, P<DimExpr>),
-    /// A division operation.
-    Div(P<DimExpr>, P<DimExpr>),
-    /// An exponentiation operation.
-    Pow(P<DimExpr>, P<DimExpr>),
-    /// A negation operation.
-    Neg(P<DimExpr>),
-    /// An identifier.
-    Ident(Ident),
-    /// A number.
-    Number(Number),
-}
-
 impl ToString for DimExprKind {
     fn to_string(&self) -> String {
         match self {
@@ -416,7 +415,46 @@ impl ToString for DimExprKind {
 /// An expression.
 pub type Expr = KindNode<ExprKind>;
 
+#[derive(Clone, Debug)]
+pub enum ExprKind {
+    // /// An assignment expresion.
+    Assign(P<BindPat>, P<Expr>),
+    /// An infix operation.
+    InfixOp(Operator, P<Expr>, P<Expr>),
+    /// A prefix operation.
+    PrefixOp(Operator, P<Expr>),
+    /// A postfix operation.
+    PostfixOp(P<Expr>, Operator),
+    /// A unit expression.
+    Unit(P<Expr>, Unit),
+    // An if-else expression.
+    IfElse(P<Expr>, ListNode<Expr>, ListNode<Expr>),
+    // A for-range expression.
+    ForRange(P<BindPat>, P<Expr>, ListNode<Expr>),
+    /// A function call expression.
+    FnCall(Path, ListNode<Expr>),
+
+    /// A list.
+    List(ListNode<Expr>),
+    /// A tuple.
+    Tuple(ListNode<Expr>),
+    /// An identifier path.
+    Path(Path),
+    /// An identifier.
+    Ident(Ident),
+    /// A number.
+    Number(Number),
+    /// A string
+    String(String),
+    /// A boolean.
+    Boolean(bool),
+}
+
 impl Expr {
+    pub fn assign(bind: BindPat, expr: Expr) -> Self {
+        Self::new(ExprKind::Assign(bind.into(), expr.into()))
+    }
+
     pub fn infix_op(op: Operator, lhs: Expr, rhs: Expr) -> Self {
         Self::new(ExprKind::InfixOp(op, lhs.into(), rhs.into()))
     }
@@ -435,6 +473,10 @@ impl Expr {
 
     pub fn if_else(cond: Expr, then: ListNode<Expr>, else_: ListNode<Expr>) -> Self {
         Self::new(ExprKind::IfElse(cond.into(), then, else_))
+    }
+
+    pub fn for_range(bind: BindPat, expr: Expr, body: ListNode<Expr>) -> Self {
+        Self::new(ExprKind::ForRange(bind.into(), expr.into(), body))
     }
 
     pub fn fn_call(path: Path, args: ListNode<Expr>) -> Self {
@@ -468,41 +510,71 @@ impl Expr {
     pub fn boolean(value: bool) -> Self {
         Self::new(ExprKind::Boolean(value))
     }
+
+    pub fn into_bind_pat(self) -> Result<BindPat, Spanned<String>> {
+        let span = self.span();
+        match self.kind {
+            ExprKind::Tuple(items) => {
+                let items = items.to_vec();
+                let items = items
+                    .into_iter()
+                    .map(|expr| expr.into_bind_pat())
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(BindPat::tuple(ListNode::new(items)).with_span(span))
+            }
+            ExprKind::Ident(ident) => {
+                if ident.raw == "_" {
+                    Ok(BindPat::ignored().with_span(span))
+                } else {
+                    Ok(BindPat::var(ident).with_span(span))
+                }
+            }
+            _ => Err(span.into_spanned("invalid binding pattern".to_string())),
+        }
+    }
 }
 
-#[derive(Clone, Debug)]
-pub enum ExprKind {
-    /// An infix operation.
-    InfixOp(Operator, P<Expr>, P<Expr>),
-    /// A prefix operation.
-    PrefixOp(Operator, P<Expr>),
-    /// A postfix operation.
-    PostfixOp(P<Expr>, Operator),
-    /// A unit expression.
-    Unit(P<Expr>, Unit),
-    // An if-else expression.
-    IfElse(P<Expr>, ListNode<Expr>, ListNode<Expr>),
-    /// A function call expression.
-    FnCall(Path, ListNode<Expr>),
+/// A binding pattern.
+pub type BindPat = KindNode<BindPatKind>;
 
-    /// A list.
-    List(ListNode<Expr>),
-    /// A tuple.
-    Tuple(ListNode<Expr>),
-    /// An identifier path.
-    Path(Path),
-    /// An identifier.
-    Ident(Ident),
-    /// A number.
-    Number(Number),
-    /// A string
-    String(String),
-    /// A boolean.
-    Boolean(bool),
+#[derive(Clone, Debug)]
+pub enum BindPatKind {
+    /// An ignored binding.
+    Ignored,
+    /// A variable pattern.
+    Var(Ident),
+    /// A tuple pattern.
+    Tuple(ListNode<BindPat>),
+}
+
+impl BindPat {
+    pub fn ignored() -> Self {
+        Self::new(BindPatKind::Ignored)
+    }
+
+    pub fn var(ident: Ident) -> Self {
+        Self::new(BindPatKind::Var(ident))
+    }
+
+    pub fn tuple(items: ListNode<BindPat>) -> Self {
+        Self::new(BindPatKind::Tuple(items))
+    }
 }
 
 /// A type.
 pub type Ty = KindNode<TyKind>;
+
+#[derive(Clone, Debug)]
+pub enum TyKind {
+    Any,
+    Bool,
+    Int,
+    Float,
+    Str,
+    Num,
+    List,
+    Tuple(ListNode<Ty>),
+}
 
 impl Ty {
     pub fn any() -> Self {
@@ -536,18 +608,6 @@ impl Ty {
     pub fn tuple(items: ListNode<Ty>) -> Self {
         Self::new(TyKind::Tuple(items))
     }
-}
-
-#[derive(Clone, Debug)]
-pub enum TyKind {
-    Any,
-    Bool,
-    Int,
-    Float,
-    Str,
-    Num,
-    List,
-    Tuple(ListNode<Ty>),
 }
 
 /// A path is a multi-part identifier specifiying an item in a module.
