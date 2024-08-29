@@ -94,12 +94,19 @@ impl<'ctx> Interpreter<'ctx> {
             args.pretty_string(&())
         ));
 
-        // evaluate each argument while checking that the correct number of arguments are given
+        let is_variadic = f.params.last().map_or(false, |p| p.is_variadic());
+        let check_min_args = if is_variadic {
+            f.params.len() - 1
+        } else {
+            f.params.len()
+        };
+
+        // check that the minimim number of fixed arguments are provided
         let mut values = vec![];
         let mut pos = args.start_pos() + 1;
-        for (i, param) in f.params.iter().enumerate() {
+        for (i, param) in f.params[..check_min_args].iter().enumerate() {
             let arg = args.get(i).ok_or_else(|| {
-                TypeError::new(
+                TypeError::mismatch(
                     format!(
                         "function {} expects {} argument(s)",
                         f.name.raw,
@@ -109,13 +116,22 @@ impl<'ctx> Interpreter<'ctx> {
                 )
             })?;
 
+            let value = arg.eval(self)?;
+            let ty = param.ty.clone().map_or(rt::Ty::Any, |ty| ty.raw);
+            values.push(rt::coerce::to_ty(self.ctx, value, ty));
             pos = arg.span().end_pos();
-            values.push(arg.eval(self)?);
         }
 
-        // check if there are any remaining arguments that shouldnt be
-        if args.len() > f.params.len() {
-            return Err(TypeError::new(
+        if is_variadic {
+            // push the remaining arguments into the variadic parameter
+            let mut variadic = vec![];
+            for arg in args.iter().skip(check_min_args) {
+                variadic.push(arg.eval(self)?);
+            }
+
+            values.push(Value::list(variadic));
+        } else if args.len() > f.params.len() {
+            return Err(TypeError::mismatch(
                 format!(
                     "function {} expects {} argument(s)",
                     f.name.raw,
@@ -127,14 +143,6 @@ impl<'ctx> Interpreter<'ctx> {
             )
             .into());
         }
-
-        // apply any coercion from the arguments to the parameters
-        let values = values
-            .into_iter()
-            .zip(f.params.iter())
-            .map(|(v, p)| (v, p.ty.clone().map_or(rt::Ty::Any, |ty| ty.raw)))
-            .map(|(v, t)| rt::coerce::to_ty(self.ctx, v, t))
-            .collect::<Vec<_>>();
 
         // invoke the function
         let result = match &f.kind {
@@ -263,7 +271,7 @@ impl<'ctx> Interp<'ctx, ()> for UnitDecl {
                     match CastInto::<rt::Number>::cast(intrp.ctx, value) {
                         Ok(num) => num,
                         Err(_) => {
-                            return Err(TypeError::new(
+                            return Err(TypeError::mismatch(
                                 format!("expected scalar value in unit declaration"),
                                 scalar.span().into_spanned("given value".to_string()),
                             )
@@ -308,7 +316,7 @@ impl<'ctx> Interp<'ctx, ()> for OpDecl {
                 OpKind::Infix => 2,
             };
             if func.params.len() != expected_params {
-                return Err(TypeError::new(
+                return Err(TypeError::mismatch(
                     format!(
                         "expected function that takes {} parameter(s)",
                         expected_params
@@ -329,6 +337,18 @@ impl<'ctx> Interp<'ctx, ()> for OpDecl {
 impl<'ctx> Interp<'ctx, ()> for FnDecl {
     fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<()> {
         no_trace! {self, intrp, "Interp::<()>::FnDecl", {
+            // validate the parameters
+            for (i, param) in self.params.iter().enumerate() {
+                if param.is_variadic && i != self.params.len() - 1 {
+                    return Err(TypeError::simple(
+                        param
+                            .span()
+                            .into_spanned("variadic parameter must be last".to_string()),
+                    )
+                    .into());
+                }
+            }
+
             let name = self.name.as_spanned_ustr();
             let params = self.params.eval(intrp)?;
             let kind = rt::FunctionKind::Source(self.body.clone());
@@ -345,6 +365,11 @@ impl<'ctx> Interp<'ctx, ()> for FnDecl {
 impl<'ctx> Interp<'ctx, rt::Param> for Param {
     fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<rt::Param> {
         no_trace! {self, intrp, "Interp::<Param>::Param", {
+            if self.is_variadic {
+                assert!(self.anno.is_none());
+                return Ok(rt::Param::variadic(self.name.as_spanned_ustr()));
+            }
+
             let ty = match &self.anno {
                 Some(Left(dim_node)) => {
                     let ty = rt::Ty::Dim(rt::Dim::from(dim_node.eval(intrp)?));
@@ -454,7 +479,7 @@ impl<'ctx> Interp<'ctx, Value> for Expr {
                             let quantity = (number, dim).into();
                             Ok(Value::Quantity(quantity))
                         }
-                        _ => Err(TypeError::new(
+                        _ => Err(TypeError::mismatch(
                             format!("expected number"),
                             expr.span().into_spanned("given value".to_string()),
                         )

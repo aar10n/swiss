@@ -7,7 +7,7 @@ use super::{DeclError, TypeError};
 
 use crate::ast::{Expr, Ident, ListNode};
 use crate::print::ansi::{
-    chars::{ARROW, COMMA, EQUALS, LBRAC, LPARN, RBRAC, RPARN},
+    chars::{ARROW, COLON, COMMA, EQUALS, LBRAC, LPARN, RBRAC, RPARN},
     ATTR, BOLD, DIMENSION, DIRECTIVE, IDENT, KEYWORD, KIND, NUMBER, OPERATOR, PUNCT, RESET, STRING,
     UNIT,
 };
@@ -168,14 +168,34 @@ impl Debug for FunctionKind {
 pub struct Param {
     pub name: Spanned<Ustr>,
     pub ty: Option<Spanned<Ty>>,
+    pub variadic: bool,
 }
 
 impl Param {
     pub fn new(name: Spanned<Ustr>, ty: Option<Spanned<Ty>>) -> Self {
-        Self { name, ty }
+        Self {
+            name,
+            ty,
+            variadic: false,
+        }
+    }
+
+    pub fn variadic(name: Spanned<Ustr>) -> Self {
+        Self {
+            name,
+            ty: None,
+            variadic: true,
+        }
+    }
+
+    pub fn is_variadic(&self) -> bool {
+        self.variadic
     }
 
     pub fn type_string(&self) -> String {
+        if self.variadic {
+            return "...".to_string();
+        }
         match &self.ty {
             Some(ty) => ty.raw.to_string(),
             None => Ty::Any.to_string(),
@@ -188,6 +208,7 @@ impl From<(Ustr, Option<Ty>)> for Param {
         Self {
             name: Spanned::new(name, SourceSpan::default()),
             ty: ty.map(|ty| Spanned::new(ty, SourceSpan::default())),
+            variadic: false,
         }
     }
 }
@@ -200,8 +221,10 @@ impl PrettyPrint<Context> for Param {
         level: usize,
     ) -> std::io::Result<()> {
         write!(out, "{IDENT}{}{RESET}", self.name.raw)?;
-        if let Some(ty) = &self.ty {
-            write!(out, " {DIMENSION}{}{RESET}", ty.pretty_string(ctx))?;
+        if self.variadic {
+            write!(out, "{PUNCT}...{RESET}")?;
+        } else if let Some(ty) = &self.ty {
+            write!(out, "{COLON} {DIMENSION}{}{RESET}", ty.pretty_string(ctx))?;
         }
         Ok(())
     }

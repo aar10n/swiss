@@ -329,6 +329,7 @@ pub struct Param {
     span: SourceSpan,
     pub name: Ident,
     pub anno: Option<Either<DimExpr, Ty>>,
+    pub is_variadic: bool,
 }
 
 impl Param {
@@ -338,6 +339,17 @@ impl Param {
             span: SourceSpan::default(),
             name,
             anno,
+            is_variadic: false,
+        }
+    }
+
+    pub fn new_variadic(name: Ident) -> Self {
+        Self {
+            id: node_id::next(),
+            span: SourceSpan::default(),
+            name,
+            anno: None,
+            is_variadic: true,
         }
     }
 
@@ -417,7 +429,7 @@ pub type Expr = KindNode<ExprKind>;
 
 #[derive(Clone, Debug)]
 pub enum ExprKind {
-    // /// An assignment expresion.
+    /// An assignment expresion.
     Assign(P<BindPat>, P<Expr>),
     /// An infix operation.
     InfixOp(Operator, P<Expr>, P<Expr>),

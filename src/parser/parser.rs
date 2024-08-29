@@ -826,6 +826,7 @@ impl<'a> Parser<'a> {
     }
 
     // param ::= <ident> _ ':' _ (<type> | '[' <dim_expr> ']')
+    //         | <ident> _ '...'
     //         | <ident>
     fn parse_param(&mut self) -> ParseResult<Param> {
         self.span_and_trace("parse_param", |parser| {
@@ -844,6 +845,8 @@ impl<'a> Parser<'a> {
                 };
 
                 Ok(Param::new(name, anno))
+            } else if parser.consume_one(Token::TripleDot).is_some() {
+                Ok(Param::new_variadic(name))
             } else {
                 Ok(Param::new(name, None))
             }

@@ -93,6 +93,15 @@ impl<'a> Lexer<'a> {
             self.lex_line_comment()
         } else if ch == '"' {
             self.lex_string()
+        } else if ch == '.' {
+            if self.peek(0) == '.' && self.peek(1) == '.' {
+                self.take_one().unwrap(); // .
+                self.take_one().unwrap(); // .
+                self.take_one().unwrap(); // .
+                Ok(Token::TripleDot)
+            } else {
+                self.lex_operator()
+            }
         } else if is_operator_char(ch) {
             self.lex_operator()
         } else if is_whitespace_char(ch) {

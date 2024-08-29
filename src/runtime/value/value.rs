@@ -23,6 +23,10 @@ pub enum Value {
 }
 
 impl Value {
+    pub fn list(values: Vec<Value>) -> Self {
+        Value::List(Rc::new(RefCell::new(values)))
+    }
+
     pub fn is_quantity(&self) -> bool {
         matches!(self, Value::Quantity(_))
     }

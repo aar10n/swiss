@@ -26,6 +26,7 @@ pub enum Token {
     PathSep,        // ::
     Colon,          // :
     Comma,          // ,
+    TripleDot,      // ...
     Space,          // ␣
     NewLine,        // \n
     EndOfFile,
@@ -111,6 +112,7 @@ impl Display for Token {
             Token::PathSep => write!(f, "::"),
             Token::Colon => write!(f, ":"),
             Token::Comma => write!(f, ","),
+            Token::TripleDot => write!(f, "..."),
             Token::Space => write!(f, " "),
             Token::NewLine => write!(f, "\n"),
             Token::EndOfFile => write!(f, ""),
@@ -144,6 +146,7 @@ impl<Ctx> PrettyPrint<Ctx> for Token {
             Token::PathSep => write!(out, "PathSep {OPERATOR}::{RESET}"),
             Token::Colon => write!(out, "Colon {PUNCT}:{RESET}"),
             Token::Comma => write!(out, "Comma {PUNCT},{RESET}"),
+            Token::TripleDot => write!(out, "TripleDot {PUNCT}...{RESET}"),
             Token::Space => write!(out, "{BOLD}Space{RESET}"),
             Token::NewLine => write!(out, "{BOLD}Newline{RESET}"),
             Token::EndOfFile => Ok(()),

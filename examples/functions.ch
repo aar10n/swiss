@@ -1,8 +1,13 @@
 ; types:
-;   any   - any type
-;   int   - arbitrary precision integer
-;   float - arbitrary precision floating point
-;   num   - a numeric type (int or float)
+;   any         - any type
+;   bool        - boolean
+;   int         - arbitrary precision integer
+;   float       - arbitrary precision floating point
+;   str         - string
+;   num         - a numeric type (int or float)
+;   list        - a list type
+;   tuple[T...] - a tuple type
+;   iter[T]     - an iterator type
 ;
 ; 
 ; typed parameters:
@@ -11,13 +16,14 @@
 ; dimension parameters:
 ;   <param>:[<dim>]
 ;
+;
 
 fn min(a, b) { if a < b { a } else { b } }
 fn max(a, b) { if a > b { a } else { b } }
 
 fn min(vals...) {
   r = 0
-  for v in vals {
+  for v range vals {
     r += v
   }
   r

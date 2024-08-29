@@ -106,16 +106,24 @@ impl IntoError for NameError {
 /// A type error.
 #[derive(Debug)]
 pub struct TypeError {
-    pub expected: String,
+    pub expected: Option<String>,
     pub found: Spanned<String>,
     pub context: Option<Spanned<String>>,
 }
 
 impl TypeError {
-    pub fn new(expected: String, found: Spanned<String>) -> Self {
+    pub fn mismatch(expected: String, found: Spanned<String>) -> Self {
         Self {
-            expected,
+            expected: Some(expected),
             found,
+            context: None,
+        }
+    }
+
+    pub fn simple(error: Spanned<String>) -> Self {
+        Self {
+            expected: None,
+            found: error,
             context: None,
         }
     }
@@ -128,11 +136,15 @@ impl TypeError {
 
 impl IntoError for TypeError {
     fn into_error(self) -> Error {
-        let msg = format!(
-            "TypeError: expected {}, found '{}'",
-            self.expected,
-            self.found.as_str()
-        );
+        let msg = if let Some(expected) = self.expected {
+            format!(
+                "TypeError: expected {}, found '{}'",
+                expected,
+                self.found.as_str()
+            )
+        } else {
+            format!("TypeError: {}", self.found.as_str())
+        };
         let mut err = Error::new(msg, self.found.span);
         if let Some(context) = self.context {
             err = err.with_extra(format!("in context '{}'", context.as_str()), context.span);
