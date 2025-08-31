@@ -24,10 +24,10 @@ impl Pattern {
         &self,
         ctx: &Context,
         value: Value,
-    ) -> Result<SmallVec<[(Ustr, Value); 3]>, Exception> {
+    ) -> Result<SmallVec<[(Spanned<Ustr>, Value); 3]>, Exception> {
         match self {
             Pattern::Ignore => Ok(SmallVec::new()),
-            Pattern::Var(ident) => Ok(smallvec![(ident.raw, value)]),
+            Pattern::Var(ident) => Ok(smallvec![(ident.clone(), value)]),
             Pattern::Tuple(pats) => {
                 if let Value::Tuple(values) = value {
                     if values.len() < pats.len() {

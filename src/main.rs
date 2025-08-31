@@ -30,6 +30,9 @@ struct Args {
     #[arg(short, long, help = "Evaluate the given file(s)")]
     file: Vec<String>,
 
+    #[arg(short, long, help = "Evaluate the given expression")]
+    expr: Vec<String>,
+
     #[arg(short, long, help = "Run an interactive REPL")]
     interactive: bool,
 
@@ -44,10 +47,20 @@ fn main() -> io::Result<()> {
         sources.push((path.clone(), read_from_file(&path)));
     }
 
+    let has_expressions = !args.expr.is_empty();
+    for expr in args.expr {
+        sources.push(("<expr>".to_owned(), expr));
+    }
+
     match args.input.as_deref() {
         Some("-") => sources.push(("<stdin>".to_owned(), read_from_stdin())),
         Some(file) => sources.push((file.to_owned(), read_from_file(file))),
-        None => (),
+        None => {
+            // If no expressions were provided via -e, read from stdin
+            if !has_expressions && !args.interactive && !atty::is(Stream::Stdin) {
+                sources.push(("<stdin>".to_owned(), read_from_stdin()));
+            }
+        }
     };
     let num_sources = sources.len();
 

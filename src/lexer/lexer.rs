@@ -81,7 +81,7 @@ impl<'a> Lexer<'a> {
         let ch = self.chars.peek().copied()?;
         let start_off = self.offset;
 
-        let result = if ch.is_digit(10) {
+        let result = if is_decimal_digit(ch) {
             self.lex_number()
         } else if is_identifier_char_start(ch) {
             if self.state == LexerState::StartOfDirective {
@@ -99,6 +99,8 @@ impl<'a> Lexer<'a> {
                 self.take_one().unwrap(); // .
                 self.take_one().unwrap(); // .
                 Ok(Token::TripleDot)
+            } else if is_decimal_digit(self.peek(0)) {
+                self.lex_number()
             } else {
                 self.lex_operator()
             }
@@ -146,32 +148,36 @@ impl<'a> Lexer<'a> {
     fn lex_number(&mut self) -> LexResult<Token> {
         // 1234_1234
         // 1234.5678
+        // .1234
         // 12.25e-4
         // 10e+5
         // 0b1010_1111
         // 0x1234_1234
         // 0o7777_7777
+        let mut is_int = true;
+        let mut is_exp = false;
+        let mut is_exp_start = false;
+        let mut can_underscore = false;
+
         let mut value = String::new();
         let mut radix = 10i32;
+
         if self.peek(0) == '0' {
             match self.peek(1) {
                 'b' => radix = 2,
                 'o' => radix = 8,
                 'x' => radix = 16,
-                _ => value.push(self.take_one().unwrap()),
+                _ => (),
+            }
+            if radix != 10 {
+                self.take_one().unwrap(); // 0
+                self.take_one().unwrap(); // b, o, x
             }
         }
 
-        if radix != 10 {
-            self.take_one().unwrap(); // 0
-            self.take_one().unwrap(); // b, o, x
-        }
-
-        let mut is_int = true;
-        let mut is_exp = false;
-        let mut is_exp_start = false;
         while let Some(ch) = self.chars.peek().copied() {
-            if ch == '_' {
+            if ch == '_' && can_underscore {
+                can_underscore = false;
                 self.take_one();
                 continue;
             }
@@ -191,20 +197,21 @@ impl<'a> Lexer<'a> {
             } else if is_exp_start && (ch == '-' || ch == '+') {
                 is_exp_start = false;
             } else if !ch.is_digit(radix as u32) {
-                if ch.is_ascii_alphanumeric() {
-                    return Err(LexError::new(
-                        &format!(
-                            "unexpected character in {}",
-                            if is_int { "integer" } else { "float" }
-                        ),
-                        self.position(),
-                    ));
-                }
+                // if ch.is_ascii_alphanumeric() {
+                //     return Err(LexError::new(
+                //         &format!(
+                //             "unexpected character in {}",
+                //             if is_int { "integer" } else { "float" }
+                //         ),
+                //         self.position(),
+                //     ));
+                // }
                 break;
             } else if is_exp_start {
                 is_exp_start = false;
             }
 
+            can_underscore = true;
             value.push(self.take_one().unwrap());
         }
 
@@ -291,6 +298,8 @@ impl<'a> Lexer<'a> {
             }
         } else if op == '=' && !is_operator_char(self.peek(0)) {
             Token::Assign
+        } else if op == '&' {
+            Token::Ampersand
         } else {
             Token::Operator(Ustr::from(&op.to_string()))
         };
@@ -395,6 +404,10 @@ impl<'a> Lexer<'a> {
 
         Ok(ch)
     }
+}
+
+fn is_decimal_digit(ch: char) -> bool {
+    ch.is_digit(10)
 }
 
 fn is_identifier_char_start(ch: char) -> bool {

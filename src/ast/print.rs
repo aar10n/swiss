@@ -98,12 +98,9 @@ impl PrettyPrint<Context> for Item {
             ItemKind::DimDecl(decl) => decl.pretty_print(out, ctx, level),
             ItemKind::UnitDecl(decl) => decl.pretty_print(out, ctx, level),
             ItemKind::OpDecl(decl) => decl.pretty_print(out, ctx, level),
+            ItemKind::ConstDecl(decl) => decl.pretty_print(out, ctx, level),
             ItemKind::FnDecl(decl) => decl.pretty_print(out, ctx, level),
-            ItemKind::Expr(expr) => {
-                write!(out, "{KIND}Expr{RESET} ")?;
-                expr.pretty_print(out, ctx, level)?;
-                writeln!(out)
-            }
+            ItemKind::Expr(expr) => expr.pretty_print(out, ctx, level),
         }
     }
 }
@@ -230,6 +227,24 @@ impl PrettyPrint<Context> for OpDecl {
     }
 }
 
+impl PrettyPrint<Context> for ConstDecl {
+    fn pretty_print<Output: io::Write>(
+        &self,
+        out: &mut Output,
+        ctx: &Context,
+        level: usize,
+    ) -> io::Result<()> {
+        let tab = TABWIDTH.repeat(level);
+        out.write_all(tab.as_bytes())?;
+
+        write!(out, "{KIND}ConstDecl{RESET} ")?;
+        self.name.pretty_print(out, ctx, 0)?;
+        write!(out, " {EQUALS} ")?;
+        self.value.pretty_print(out, ctx, 0)?;
+        writeln!(out)
+    }
+}
+
 impl PrettyPrint<Context> for FnDecl {
     fn pretty_print<Output: io::Write>(
         &self,
@@ -294,6 +309,27 @@ impl PrettyPrint<Context> for DimExpr {
     }
 }
 
+impl PrettyPrint<Context> for Stmt {
+    fn pretty_print<Output: io::Write>(
+        &self,
+        out: &mut Output,
+        ctx: &Context,
+        level: usize,
+    ) -> io::Result<()> {
+        let tab = TABWIDTH.repeat(level);
+        out.write_all(tab.as_bytes())?;
+        match &self.kind {
+            StmtKind::Expr(expr) => {
+                write!(out, "{KIND}Expr{RESET} ")?;
+                expr.pretty_print(out, ctx, 0)
+            }
+            StmtKind::Return(expr) => {
+                write!(out, "{KEYWORD}Return{RESET} ")?;
+                expr.pretty_print(out, ctx, 0)
+            }
+        }
+    }
+}
 impl PrettyPrint<Context> for Expr {
     fn pretty_print<Output: io::Write>(
         &self,
@@ -328,7 +364,7 @@ impl PrettyPrint<Context> for Expr {
                 write!(out, " ")?;
                 op.pretty_print(out, ctx, 0)
             }
-            ExprKind::Unit(expr, unit) => {
+            ExprKind::UnitCast(expr, unit) => {
                 expr.pretty_print(out, ctx, 0)?;
                 write!(out, " ")?;
                 unit.pretty_print(out, ctx, 0)
@@ -413,6 +449,8 @@ impl PrettyPrint<Context> for Expr {
             ExprKind::Number(number) => number.pretty_print(out, ctx, level),
             ExprKind::String(string) => write!(out, "{STRING}\"{}\"{RESET}", string),
             ExprKind::Boolean(boolean) => write!(out, "{NUMBER}{}{RESET}", boolean),
+            ExprKind::Unit(unit) => unit.pretty_print(out, ctx, level),
+            ExprKind::Type(ty) => ty.pretty_print(out, ctx, level),
         }
     }
 }
@@ -459,6 +497,8 @@ impl PrettyPrint<Context> for Ty {
             TyKind::Float => write!(out, "{ATTR}float{RESET}"),
             TyKind::Str => write!(out, "{ATTR}string{RESET}"),
             TyKind::Num => write!(out, "{ATTR}num{RESET}"),
+            TyKind::Unit => write!(out, "{ATTR}unit{RESET}"),
+            TyKind::Type => write!(out, "{ATTR}type{RESET}"),
             TyKind::List => write!(out, "{ATTR}list{RESET}"),
             TyKind::Tuple(tys) => {
                 write!(out, "{LPARN}")?;
@@ -469,6 +509,10 @@ impl PrettyPrint<Context> for Ty {
                     }
                 }
                 write!(out, "{RPARN}")
+            }
+            TyKind::Ref(ty) => {
+                write!(out, "&")?;
+                ty.pretty_print(out, ctx, 0)
             }
         }
     }

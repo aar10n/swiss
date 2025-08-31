@@ -21,6 +21,7 @@ pub enum Token {
     RDelim(&'static str),
     DirectiveStart, // #[
     DirectiveEnd,   // ]
+    Ampersand,      // &
     Assign,         // =
     RangeAssign,    // :=
     PathSep,        // ::
@@ -66,7 +67,11 @@ impl Token {
     }
 
     pub fn is_operator(&self) -> bool {
-        matches!(self, Token::Operator(_) | Token::Assign | Token::Colon)
+        match self {
+            Token::Operator(_) => true,
+            Token::Ampersand | Token::Assign | Token::Colon => true,
+            _ => false,
+        }
     }
 
     pub fn is_identifier(&self) -> bool {
@@ -84,6 +89,7 @@ impl Token {
     pub fn get_operator(&self) -> Option<Ustr> {
         match self {
             Token::Operator(op) => Some(op.clone()),
+            Token::Ampersand => Some(Ustr::from("&")),
             Token::Assign => Some(Ustr::from("=")),
             Token::Comma => Some(Ustr::from(",")),
             _ => None,
@@ -107,6 +113,7 @@ impl Display for Token {
             Token::RDelim(s) => write!(f, "{}", s),
             Token::DirectiveStart => write!(f, "#["),
             Token::DirectiveEnd => write!(f, "]"),
+            Token::Ampersand => write!(f, "&"),
             Token::Assign => write!(f, "="),
             Token::RangeAssign => write!(f, ":="),
             Token::PathSep => write!(f, "::"),
@@ -144,6 +151,7 @@ impl<Ctx> PrettyPrint<Ctx> for Token {
             Token::Assign => write!(out, "Assign {OPERATOR}={RESET}"),
             Token::RangeAssign => write!(out, "RangeAssign {OPERATOR}:={RESET}"),
             Token::PathSep => write!(out, "PathSep {OPERATOR}::{RESET}"),
+            Token::Ampersand => write!(out, "Ampersand {OPERATOR}&{RESET}"),
             Token::Colon => write!(out, "Colon {PUNCT}:{RESET}"),
             Token::Comma => write!(out, "Comma {PUNCT},{RESET}"),
             Token::TripleDot => write!(out, "TripleDot {PUNCT}...{RESET}"),
@@ -168,6 +176,7 @@ pub enum Keyword {
     Operator,
     Postfix,
     Prefix,
+    Return,
     Unit,
 }
 
@@ -190,5 +199,6 @@ pub static KEYWORDS: phf::Map<&'static str, Keyword> = phf_map! {
     "operator" => Keyword::Operator,
     "postfix" => Keyword::Postfix,
     "prefix" => Keyword::Prefix,
+    "return" => Keyword::Return,
     "unit" => Keyword::Unit,
 };

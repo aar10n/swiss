@@ -138,7 +138,7 @@ impl IntoError for TypeError {
     fn into_error(self) -> Error {
         let msg = if let Some(expected) = self.expected {
             format!(
-                "TypeError: expected {}, found '{}'",
+                "TypeError: expected '{}', found '{}'",
                 expected,
                 self.found.as_str()
             )

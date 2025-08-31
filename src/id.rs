@@ -42,3 +42,4 @@ macro_rules! unique_id_type {
 unique_id_type!(pub NodeId);
 unique_id_type!(pub SourceId);
 unique_id_type!(pub ModuleId);
+unique_id_type!(pub VarId);

@@ -53,6 +53,11 @@ impl Module {
         self.names.insert_function(func)
     }
 
+    pub fn with_constant(&mut self, constant: Constant) -> &mut Self {
+        self.register_constant(constant).unwrap();
+        self
+    }
+
     pub fn with_function(&mut self, func: Function) -> &mut Self {
         self.register_function(func).unwrap();
         self

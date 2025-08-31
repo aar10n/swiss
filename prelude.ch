@@ -1,5 +1,5 @@
 ;
-; MARK: Operators
+; Operators
 ;
 
 ; types:
@@ -9,48 +9,59 @@
 ;   int
 ;   str
 ;   num
+;   list
+;   tuple[T...] or (T...)
+;   unit
+;   type
 
-#[associativity="left"]
+#[associativity="right"]
 #[precedence=0]
+infix operator (+=)(&num,num) = builtin::add_assign
+infix operator (-=)(&num,num) = builtin::sub_assign
+infix operator (*=)(&num,num) = builtin::mul_assign
+infix operator (/=)(&num,num) = builtin::div_assign
+#[associativity="left"]
+#[precedence=1]
 infix operator (==)(num,num) = builtin::eq
 infix operator (!=)(num,num) = builtin::ne
-#[precedence=1]
+#[precedence=2]
 infix operator (<)(num,num) = builtin::lt
 infix operator (>)(num,num) = builtin::gt
 infix operator (<=)(num,num) = builtin::le
 infix operator (>=)(num,num) = builtin::ge
-#[precedence=2]
-infix operator (||)(num,num) = builtin::or
 #[precedence=3]
-infix operator (&&)(num,num) = builtin::and
+infix operator (||)(num,num) = builtin::or
 #[precedence=4]
+infix operator (&&)(num,num) = builtin::and
+#[precedence=5]
 infix operator (<<)(num,num) = builtin::bit_shl
 infix operator (>>)(num,num) = builtin::bit_shr
 ; ------------------------
 #[associativity="right"]
-#[precedence=5]
+#[precedence=6]
 prefix operator (+)(num) = builtin::pos
 prefix operator (-)(num) = builtin::neg
 prefix operator (!)(num) = builtin::not
 prefix operator (~)(num) = builtin::bit_not
 ; ------------------------
 #[associativity="left"]
-#[precedence=6]
+#[precedence=7]
 infix operator (+)(num,num) = builtin::add
 infix operator (-)(num,num) = builtin::sub
 infix operator (|)(num,num) = builtin::bit_or
-#[precedence=7]
+#[precedence=8]
 infix operator (*)(num,num) = builtin::mul
 infix operator (/)(num,num) = builtin::div
 ;infix operator (%)(num,num) = builtin::mod
 infix operator (&)(num,num) = builtin::bit_and
 ; ------------------------
-#[precedence=8]
+#[precedence=9]
 infix operator (^)(num,num) = builtin::pow
-
+#[precedence=10]
+infix operator (->)(num,unit) = builtin::unit_cast
 
 ;
-; MARK: Units
+; Units
 ;
 
 ; base units:
@@ -137,3 +148,30 @@ unit millihenry{mH} [H] = 1e-3
 unit microhenry{μH,uH} [H] = 1e-6
 unit nanohenry{nH} [H] = 1e-9
 unit picohenry{pH} [H] = 1e-12
+
+;
+; Constants
+;
+
+const PI = 3.14159265358979323846
+const E = 2.71828182845904523536
+
+;
+; Functions
+;
+
+fn align(x: num, a: num) {
+  if a == 0 {
+    x
+  } else {
+    (x + a - 1) & ~(a - 1)
+  }
+}
+
+fn align_down(x: num, a: num) {
+  if a == 0 {
+    x
+  } else {
+    x & ~(a - 1)
+  }
+}

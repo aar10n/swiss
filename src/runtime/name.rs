@@ -2,10 +2,10 @@ use super::builtin::NativeFn;
 use super::context::Context;
 use super::dimension::DimExpr;
 use super::exception::Exception;
-use super::value::{Ty, Value};
+use super::value::{Ty, Value, ValueRef};
 use super::{DeclError, TypeError};
 
-use crate::ast::{Expr, Ident, ListNode};
+use crate::ast::{Expr, Ident, ListNode, Stmt};
 use crate::print::ansi::{
     chars::{ARROW, COLON, COMMA, EQUALS, LBRAC, LPARN, RBRAC, RPARN},
     ATTR, BOLD, DIMENSION, DIRECTIVE, IDENT, KEYWORD, KIND, NUMBER, OPERATOR, PUNCT, RESET, STRING,
@@ -25,12 +25,15 @@ use ustr::{Ustr, UstrMap};
 #[derive(Clone, Debug)]
 pub struct Constant {
     pub name: Spanned<Ustr>,
-    pub value: Value,
+    pub value: ValueRef,
 }
 
 impl Constant {
     pub fn new(name: Spanned<Ustr>, value: Value) -> Self {
-        Self { name, value }
+        Self {
+            name,
+            value: ValueRef::new_const(value),
+        }
     }
 }
 
@@ -42,7 +45,7 @@ impl PrettyPrint<Context> for Constant {
         level: usize,
     ) -> std::io::Result<()> {
         write!(out, "{BOLD}{}{RESET} {EQUALS} ", self.name.raw)?;
-        self.value.pretty_print(out, ctx, 0)
+        self.value.borrow().pretty_print(out, ctx, 0)
     }
 }
 
@@ -69,7 +72,7 @@ impl Function {
         }
     }
 
-    pub fn source(name: Spanned<Ustr>, params: Vec<Param>, body: ListNode<Expr>) -> Self {
+    pub fn source(name: Spanned<Ustr>, params: Vec<Param>, body: ListNode<Stmt>) -> Self {
         Self {
             name,
             params,
@@ -150,7 +153,7 @@ impl PrettyPrint<Context> for Function {
 #[derive(Clone)]
 pub enum FunctionKind {
     Native(NativeFn),
-    Source(ListNode<Expr>),
+    Source(ListNode<Stmt>),
 }
 
 impl Debug for FunctionKind {

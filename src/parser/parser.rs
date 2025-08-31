@@ -49,6 +49,9 @@ const BRACK_DELIM: (Token, Token) = (Token::LDelim("["), Token::RDelim("]"));
 
     ------------------------
 
+    stmt ::= 'return' <expr>
+           | <expr>
+
     expr ::= <expr_term> _ <infix_op> _ <expr>
           | <expr_term> _ <postfix_op>
           | <expr_term> _ <unit>
@@ -71,7 +74,7 @@ const BRACK_DELIM: (Token, Token) = (Token::LDelim("["), Token::RDelim("]"));
 
     ------------------------
 
-    block_expr ::= '{' [ '\n' ] _ <expr> ('\n' _ <expr> _)* _ '}'
+    block_expr ::= '{' [ '\n' ] _ <stmt> ('\n' _ <stmt> _)* _ '}'
 
     dim_ret ::= '[' _ <dim_expr> _ ']'
 
@@ -83,8 +86,8 @@ const BRACK_DELIM: (Token, Token) = (Token::LDelim("["), Token::RDelim("]"));
 
     op_fn_param_list ::= '(' ((_ <op_fn_param> _) ** ',') ')'
 
-    param ::= <ident> '[' <dim_expr> ']'
-            | <ident> ':' <type>
+    param ::= <ident> _ ':' _ (<type> | '[' <dim_expr> ']')
+            | <ident> _ '...'
             | <ident>
 
     op_decl_param ::= '[' <dim_expr> ']'
@@ -157,7 +160,7 @@ impl<'a> Parser<'a> {
         Ok(Module::new(self.source_id, self.ctx.id, items))
     }
 
-    // item ::= [ <import> | <directive> | <base_unit_decl> | <sub_unit_decl> | <dim_decl> | <fn_decl> | <expr> ]
+    // item ::= [ <import> | <directive> | <base_unit_decl> | <sub_unit_decl> | <dim_decl> | <const_decl> | <fn_decl> | <expr> ]
     fn parse_item(&mut self) -> ParseResult<Option<Item>> {
         self.trace("parse_item", |parser| {
             parser.consume_any(Token::Space);
@@ -178,6 +181,9 @@ impl<'a> Parser<'a> {
             } else if next_token == &Token::Keyword(Keyword::Dimension) {
                 let decl = parser.parse_dim_decl()?;
                 Some(Item::dim_decl(decl))
+            } else if next_token == &Token::Keyword(Keyword::Const) {
+                let decl = parser.parse_const_decl()?;
+                Some(Item::const_decl(decl))
             } else if next_token == &Token::Keyword(Keyword::Fn) {
                 let decl = parser.parse_fn_decl()?;
                 Some(Item::fn_decl(decl))
@@ -484,6 +490,23 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // const_decl ::= 'const' _ <ident> _ '=' _ <expr>
+    fn parse_const_decl(&mut self) -> ParseResult<ConstDecl> {
+        self.span_and_trace("parse_const_decl", |parser| {
+            parser.expect(Token::Keyword(Keyword::Const), "expected 'const'")?;
+            parser.consume_any(Token::Space);
+
+            let name = parser.parse_ident()?;
+            parser.consume_any(Token::Space);
+
+            parser.expect(Token::Assign, "expected '='")?;
+            parser.consume_any(Token::Space);
+
+            let expr = parser.parse_expr(isize::MIN)?;
+            Ok(ConstDecl::new(name, expr))
+        })
+    }
+
     // fn_decl ::= 'fn' _ <ident> _ <param_list> _ [ <ret_ret> ] _ <block_expr>
     fn parse_fn_decl(&mut self) -> ParseResult<FnDecl> {
         self.span_and_trace("parse_fn_decl", |parser| {
@@ -499,7 +522,7 @@ impl<'a> Parser<'a> {
 
             let ret = if parser.peek_token() == &Token::LDelim("[") {
                 Some(Left(parser.parse_dim_ret()?))
-            } else if parser.peek_token().is_identifier() {
+            } else if is_type(parser.peek_token()) {
                 Some(Right(parser.parse_type()?))
             } else if parser.peek_token() == &Token::LDelim("{") {
                 None
@@ -583,6 +606,23 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // stmt ::= 'return' _ <expr>
+    //        | <expr>
+    fn parse_stmt(&mut self) -> ParseResult<Stmt> {
+        self.span_and_trace("parse_stmt", |parser| {
+            if parser
+                .consume_one(Token::Keyword(Keyword::Return))
+                .is_some()
+            {
+                parser.consume_any(Token::Space);
+                let expr = parser.parse_expr(isize::MIN)?;
+                Ok(Stmt::return_(expr))
+            } else {
+                let expr = parser.parse_expr(isize::MIN)?;
+                Ok(Stmt::expr(expr))
+            }
+        })
+    }
     // expr ::= <expr_term> _ <infix_op> _ <expr>
     //       | <expr_term> _ <postfix_op>
     //       | <expr_term> _ <unit>
@@ -621,7 +661,7 @@ impl<'a> Parser<'a> {
                     parser.parse_operator(OpKind::Infix, /*is_decl=*/ false)?;
                     parser.consume_any(Token::Space);
 
-                    let rhs = parser.parse_expr_term()?;
+                    let rhs = parser.parse_expr(next_prec)?;
                     if op_name == "=" {
                         let bind = match lhs.into_bind_pat() {
                             Ok(bind) => bind,
@@ -644,7 +684,10 @@ impl<'a> Parser<'a> {
                     }
                 } else if is_unit_suffix(parser.peek_token(), &parser.ctx) {
                     let unit = parser.parse_unit()?;
-                    lhs = Expr::unit(lhs, unit);
+                    if matches!(&lhs.kind, ExprKind::Unit(_) | ExprKind::Type(_)) {
+                        return Err(SyntaxError::new("invalid unit cast", parser.position()).into());
+                    }
+                    lhs = Expr::unit_cast(lhs, unit);
                 } else {
                     break;
                 }
@@ -717,6 +760,8 @@ impl<'a> Parser<'a> {
     //             | <number>
     //             | <string>
     //             | <bool>
+    //             | <unit>
+    //             | <type>
     fn parse_expr_atom(&mut self) -> ParseResult<Expr> {
         self.trace("parse_expr_atom", |parser| {
             if parser.consume_one(Token::Keyword(Keyword::If)).is_some() {
@@ -760,26 +805,32 @@ impl<'a> Parser<'a> {
                 Ok(Expr::string(string))
             } else if let Some((Token::Bool(b), _)) = parser.consume_if(Token::is_bool) {
                 Ok(Expr::boolean(b))
+            } else if is_unit_suffix(parser.peek_token(), &parser.ctx) {
+                let unit = parser.parse_unit()?;
+                Ok(Expr::unit(unit))
+            } else if is_type(parser.peek_token()) {
+                let ty = parser.parse_type()?;
+                Ok(Expr::ty(ty))
             } else {
                 Err(SyntaxError::new("expected expression", parser.position()).into())
             }
         })
     }
 
-    // block_expr ::= '{' [ '\n' ] _ <expr> ('\n' _ <expr> _)* _ [ '\n' ] '}'
-    fn parse_block_expr(&mut self) -> ParseResult<ListNode<Expr>> {
+    // block_expr ::= '{' [ '\n' ] _ <stmt> ('\n' _ <stmt> _)* _ [ '\n' ] '}'
+    fn parse_block_expr(&mut self) -> ParseResult<ListNode<Stmt>> {
         self.span_and_trace("parse_block_expr", |parser| {
             parser.expect(Token::LDelim("{"), "expected '{'")?;
             let l_delim = ("{", parser.position());
             parser.consume_one(Token::NewLine);
             parser.consume_any(Token::Space);
 
-            let mut exprs = vec![parser.parse_expr(isize::MIN)?];
+            let mut stmts = vec![parser.parse_stmt()?];
             parser.consume_any(Token::Space);
 
             while parser.peek_token() != &Token::RDelim("}") {
                 parser.consume_any(Token::Space);
-                if !exprs.is_empty() {
+                if !stmts.is_empty() {
                     parser.expect(Token::NewLine, "expected newline")?;
                     parser.consume_any(Token::Space);
                     if parser.peek_token() == &Token::RDelim("}") {
@@ -787,13 +838,13 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                exprs.push(parser.parse_expr(isize::MIN)?);
+                stmts.push(parser.parse_stmt()?);
                 parser.consume_any(Token::Space);
             }
 
             parser.expect(Token::RDelim("}"), "expected '}'")?;
             let r_delim = ("}", parser.position());
-            Ok(ListNode::new(exprs).with_delims(l_delim, r_delim))
+            Ok(ListNode::new(stmts).with_delims(l_delim, r_delim))
         })
     }
 
@@ -930,30 +981,62 @@ impl<'a> Parser<'a> {
         })
     }
 
-    // type ::= 'any' | 'int' | 'float' | 'num'
+    // type ::= '&' _ <type>
+    //        | '(' (_ <type> _) ++ ',' ')'
+    //        | 'any' | 'bool' | 'int' | 'float' | 'num' | 'str' | 'list' | 'unit' | 'type'
+    //        | 'tuple' _ '[' (_ <type> _) ++ ',' ']'
     fn parse_type(&mut self) -> ParseResult<Ty> {
         self.span_and_trace("parse_type", |parser| {
-            let raw_ty: Spanned<Ustr> = parser.spanned(|parser| {
-                parser.expect_map("expected type", |t| match t {
-                    Token::Identifier(raw) => Some(raw.clone()),
-                    _ => None,
-                })
-            })?;
+            if parser.consume_one(Token::Ampersand).is_some() {
+                parser.consume_any(Token::Space);
+                let ty = parser.parse_type()?;
+                Ok(Ty::ref_(ty))
+            } else if parser.peek_token() == &Token::LDelim("(") {
+                let types =
+                    parser.parse_list_one_or_more(Token::Comma, PAREN_DELIM, false, |p| {
+                        p.parse_type()
+                    })?;
 
-            let ty = match raw_ty.as_str() {
-                "any" => Ty::any(),
-                "bool" => Ty::bool(),
-                "int" => Ty::int(),
-                "float" => Ty::float(),
-                "str" => Ty::str(),
-                "num" => Ty::num(),
-                _ => {
-                    let err = ValueError::new("invalid type", raw_ty.to_string_inner())
-                        .with_extra("expected one of: any, int, float or num".to_owned());
-                    return Err(ParseError::from(err));
-                }
-            };
-            Ok(ty)
+                Ok(Ty::tuple(types))
+            } else {
+                parser.consume_any(Token::Space);
+
+                let raw_ty: Spanned<Ustr> = parser.spanned(|parser| {
+                    parser.expect_map("expected type", |t| match t {
+                        Token::Identifier(raw) => Some(raw.clone()),
+                        Token::Keyword(Keyword::Unit) => Some("unit".into()),
+                        _ => None,
+                    })
+                })?;
+
+                let ty = match raw_ty.as_str() {
+                    "any" => Ty::any(),
+                    "bool" => Ty::bool(),
+                    "int" => Ty::int(),
+                    "float" => Ty::float(),
+                    "num" => Ty::num(),
+                    "str" => Ty::str(),
+                    "unit" => Ty::unit(),
+                    "type" => Ty::ty(),
+                    "list" => Ty::list(),
+                    "tuple" => {
+                        parser.consume_any(Token::Space);
+                        let types = parser.parse_list_one_or_more(
+                            Token::Comma,
+                            BRACK_DELIM,
+                            false,
+                            |p| p.parse_type(),
+                        )?;
+                        Ty::tuple(types)
+                    }
+                    _ => {
+                        let err = ValueError::new("invalid type", raw_ty.to_string_inner())
+                            .with_extra("expected built-in type".to_owned());
+                        return Err(ParseError::from(err));
+                    }
+                };
+                Ok(ty)
+            }
         })
     }
 
@@ -968,6 +1051,7 @@ impl<'a> Parser<'a> {
             let mut op = parser.expect_map("expected operator", |t| match t {
                 Token::Operator(s) => Some(s.as_str().to_owned()),
                 Token::Assign => Some("=".to_owned()),
+                Token::Ampersand => Some("&".to_owned()),
                 _ => None,
             })?;
 
@@ -1307,6 +1391,12 @@ impl<'a> Parser<'a> {
     }
 }
 
+fn is_type(t: &Token) -> bool {
+    t.is_identifier()
+        || t == &Token::Ampersand
+        || matches!(t, Token::Keyword(k) if matches!(k, Keyword::Unit))
+}
+
 fn is_dim_expr(t: &Token) -> bool {
     t.is_identifier() || t.is_number() || t.is_operator() || matches!(t, Token::LDelim("("))
 }
@@ -1320,7 +1410,7 @@ fn is_postfix_op(op: &Token, ctx: &rt::Module) -> bool {
 }
 
 fn is_infix_op(op: &Token, ctx: &rt::Module) -> bool {
-    matches!(op, &Token::Operator(_) | &Token::Assign)
+    matches!(op, &Token::Operator(_) | &Token::Assign | &Token::Ampersand)
 }
 
 fn is_unit_suffix(suffix: &Token, ctx: &rt::Module) -> bool {

@@ -51,6 +51,10 @@ impl Item {
         Self::new(ItemKind::OpDecl(decl.into()))
     }
 
+    pub fn const_decl(decl: ConstDecl) -> Self {
+        Self::new(ItemKind::ConstDecl(decl.into()))
+    }
+
     pub fn fn_decl(decl: FnDecl) -> Self {
         Self::new(ItemKind::FnDecl(decl.into()))
     }
@@ -67,6 +71,7 @@ pub enum ItemKind {
     DimDecl(P<DimDecl>),
     UnitDecl(P<UnitDecl>),
     OpDecl(P<OpDecl>),
+    ConstDecl(P<ConstDecl>),
     FnDecl(P<FnDecl>),
     Expr(P<Expr>),
 }
@@ -252,7 +257,7 @@ pub struct OpDecl {
     pub prec: isize,
 
     pub params: ListNode<Param>,
-    pub body: Either<Path, ListNode<Expr>>,
+    pub body: Either<Path, ListNode<Stmt>>,
 }
 
 impl OpDecl {
@@ -262,7 +267,7 @@ impl OpDecl {
         assoc: OpAssoc,
         prec: isize,
         params: ListNode<Param>,
-        body: Either<Path, ListNode<Expr>>,
+        body: Either<Path, ListNode<Stmt>>,
     ) -> Self {
         Self {
             id: node_id::next(),
@@ -293,6 +298,26 @@ pub enum OpAssoc {
     Right,
 }
 
+/// A constant declaration.
+#[derive(Clone, Debug)]
+pub struct ConstDecl {
+    id: NodeId,
+    span: SourceSpan,
+    pub name: Ident,
+    pub value: Expr,
+}
+
+impl ConstDecl {
+    pub fn new(name: Ident, value: Expr) -> Self {
+        Self {
+            id: node_id::next(),
+            span: SourceSpan::default(),
+            name,
+            value,
+        }
+    }
+}
+
 /// A function declaration.
 #[derive(Clone, Debug)]
 pub struct FnDecl {
@@ -300,7 +325,7 @@ pub struct FnDecl {
     span: SourceSpan,
     pub name: Ident,
     pub params: ListNode<Param>,
-    pub body: ListNode<Expr>,
+    pub body: ListNode<Stmt>,
     pub ret: Option<Either<DimExpr, Ty>>,
 }
 
@@ -308,7 +333,7 @@ impl FnDecl {
     pub fn new(
         name: Ident,
         params: ListNode<Param>,
-        body: ListNode<Expr>,
+        body: ListNode<Stmt>,
         ret: Option<Either<DimExpr, Ty>>,
     ) -> Self {
         Self {
@@ -424,6 +449,25 @@ impl ToString for DimExprKind {
     }
 }
 
+/// A statement.
+pub type Stmt = KindNode<StmtKind>;
+
+#[derive(Clone, Debug)]
+pub enum StmtKind {
+    Expr(P<Expr>),
+    Return(P<Expr>),
+}
+
+impl Stmt {
+    pub fn expr(expr: Expr) -> Self {
+        Self::new(StmtKind::Expr(expr.into()))
+    }
+
+    pub fn return_(expr: Expr) -> Self {
+        Self::new(StmtKind::Return(expr.into()))
+    }
+}
+
 /// An expression.
 pub type Expr = KindNode<ExprKind>;
 
@@ -437,12 +481,12 @@ pub enum ExprKind {
     PrefixOp(Operator, P<Expr>),
     /// A postfix operation.
     PostfixOp(P<Expr>, Operator),
-    /// A unit expression.
-    Unit(P<Expr>, Unit),
+    /// A unit cast expression.
+    UnitCast(P<Expr>, Unit),
     // An if-else expression.
-    IfElse(P<Expr>, ListNode<Expr>, ListNode<Expr>),
+    IfElse(P<Expr>, ListNode<Stmt>, ListNode<Stmt>),
     // A for-range expression.
-    ForRange(P<BindPat>, P<Expr>, ListNode<Expr>),
+    ForRange(P<BindPat>, P<Expr>, ListNode<Stmt>),
     /// A function call expression.
     FnCall(Path, ListNode<Expr>),
 
@@ -460,6 +504,10 @@ pub enum ExprKind {
     String(String),
     /// A boolean.
     Boolean(bool),
+    /// A unit.
+    Unit(Unit),
+    /// A type.
+    Type(Ty),
 }
 
 impl Expr {
@@ -479,15 +527,15 @@ impl Expr {
         Self::new(ExprKind::PostfixOp(expr.into(), op))
     }
 
-    pub fn unit(expr: Expr, unit: Unit) -> Self {
-        Self::new(ExprKind::Unit(expr.into(), unit))
+    pub fn unit_cast(expr: Expr, unit: Unit) -> Self {
+        Self::new(ExprKind::UnitCast(expr.into(), unit))
     }
 
-    pub fn if_else(cond: Expr, then: ListNode<Expr>, else_: ListNode<Expr>) -> Self {
+    pub fn if_else(cond: Expr, then: ListNode<Stmt>, else_: ListNode<Stmt>) -> Self {
         Self::new(ExprKind::IfElse(cond.into(), then, else_))
     }
 
-    pub fn for_range(bind: BindPat, expr: Expr, body: ListNode<Expr>) -> Self {
+    pub fn for_range(bind: BindPat, expr: Expr, body: ListNode<Stmt>) -> Self {
         Self::new(ExprKind::ForRange(bind.into(), expr.into(), body))
     }
 
@@ -521,6 +569,14 @@ impl Expr {
 
     pub fn boolean(value: bool) -> Self {
         Self::new(ExprKind::Boolean(value))
+    }
+
+    pub fn unit(unit: Unit) -> Self {
+        Self::new(ExprKind::Unit(unit))
+    }
+
+    pub fn ty(ty: Ty) -> Self {
+        Self::new(ExprKind::Type(ty))
     }
 
     pub fn into_bind_pat(self) -> Result<BindPat, Spanned<String>> {
@@ -584,8 +640,11 @@ pub enum TyKind {
     Float,
     Str,
     Num,
+    Unit,
+    Type,
     List,
     Tuple(ListNode<Ty>),
+    Ref(Box<Ty>),
 }
 
 impl Ty {
@@ -617,8 +676,20 @@ impl Ty {
         Self::new(TyKind::List)
     }
 
+    pub fn unit() -> Self {
+        Self::new(TyKind::Unit)
+    }
+
+    pub fn ty() -> Self {
+        Self::new(TyKind::Type)
+    }
+
     pub fn tuple(items: ListNode<Ty>) -> Self {
         Self::new(TyKind::Tuple(items))
+    }
+
+    pub fn ref_(ty: Ty) -> Self {
+        Self::new(TyKind::Ref(Box::new(ty)))
     }
 }
 
@@ -815,6 +886,8 @@ impl_identifiable!(UnitDecl);
 impl_spannable!(UnitDecl);
 impl_identifiable!(OpDecl);
 impl_spannable!(OpDecl);
+impl_identifiable!(ConstDecl);
+impl_spannable!(ConstDecl);
 impl_identifiable!(FnDecl);
 impl_spannable!(FnDecl);
 impl_identifiable!(Param);

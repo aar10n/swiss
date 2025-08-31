@@ -142,6 +142,18 @@ impl<T> Spanned<T> {
     }
 }
 
+impl Into<Ustr> for Spanned<Ustr> {
+    fn into(self) -> Ustr {
+        self.raw
+    }
+}
+
+impl<T> Into<(T, SourceSpan)> for Spanned<T> {
+    fn into(self) -> (T, SourceSpan) {
+        (self.raw, self.span)
+    }
+}
+
 impl<T: ToString> Spanned<T> {
     pub fn to_string_inner(&self) -> Spanned<String> {
         Spanned {

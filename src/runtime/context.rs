@@ -3,7 +3,7 @@ use super::module::{Module, ModuleId, ModuleMap};
 use super::operator::{OpAssoc, OpKind, Operator, OperatorTable};
 use super::path::{PathLike, PathTree};
 use super::unit::{Unit, UnitKind, UnitTable};
-use super::value::Value;
+use super::value::{VRef, Value, ValueRef, VarId};
 use super::{builtin, Function, NameError};
 
 use crate::ast::{BinaryCoercion, Coercion, FloatConversion, NodeId, Path, UnitPreference, P};
@@ -56,6 +56,8 @@ impl Context {
     pub fn last_frame(&self) -> Option<&StackFrame> {
         self.call_stack.last()
     }
+
+    // MARK: Local  Scopes
 
     pub fn local_scopes(&self) -> &[LocalScope] {
         &self.local_scopes
@@ -142,24 +144,23 @@ impl Context {
         }
     }
 
-    pub fn resolve_value(&self, path: impl PathLike) -> Result<&Value, NameError> {
-        if path.len() == 1 {
-            let name = path.base_part();
+    pub fn resolve_variable(&mut self, path: impl PathLike) -> Result<ValueRef, NameError> {
+        let name = path.base_part();
+        let module = if path.len() == 1 {
             for scope in self.local_scopes.iter().rev() {
-                if let Some(value) = scope.vars.get(&name.raw) {
-                    return Ok(value);
+                if let Some(vref) = scope.vars.get(&name.raw).cloned() {
+                    return Ok(vref);
                 }
             }
 
-            self.active_module()
-                .unwrap()
-                .resolve_constant(name)
-                .map(|c| &c.value)
+            self.active_module().unwrap()
         } else {
-            self.modules
-                .get_module(path.dir_parts())?
-                .resolve_constant(path.base_part())
-                .map(|c| &c.value)
+            self.modules.get_module(path.dir_parts())?
+        };
+
+        match module.resolve_constant(name) {
+            Ok(c) => Ok(c.value.clone()),
+            Err(err) => Err(err),
         }
     }
 
@@ -215,7 +216,7 @@ impl Default for RuntimeConfig {
 // MARK: LocalScope
 
 pub struct LocalScope {
-    vars: UstrMap<Value>,
+    vars: UstrMap<ValueRef>,
 }
 
 impl LocalScope {
@@ -225,19 +226,27 @@ impl LocalScope {
         }
     }
 
+    pub fn get(&self, name: Ustr) -> Option<ValueRef> {
+        self.vars.get(&name).cloned()
+    }
+
     pub fn insert(&mut self, name: Ustr, value: Value) {
-        self.vars.insert(name, value);
+        self.vars.insert(name, value.into_ref());
     }
 
     pub fn extend<I: Iterator<Item = (Ustr, Value)>>(&mut self, vars: I) {
-        self.vars.extend(vars);
+        for (name, value) in vars {
+            self.insert(name, value);
+        }
     }
 }
 
-impl<I: Iterator<Item = (Ustr, Value)>> From<I> for LocalScope {
+impl<T: Into<Ustr>, I: Iterator<Item = (T, Value)>> From<I> for LocalScope {
     fn from(vars: I) -> Self {
         Self {
-            vars: vars.collect(),
+            vars: vars
+                .map(|(name, value)| (name.into(), value.into_ref()))
+                .collect(),
         }
     }
 }

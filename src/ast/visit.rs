@@ -41,6 +41,9 @@ pub trait Visitor<'a, S: Default, E>: Sized {
     fn visit_top_level_expr(&mut self, expr: &mut Expr) -> Result<S, E> {
         expr.walk(self)
     }
+    fn visit_stmt(&mut self, stmt: &mut Stmt) -> Result<S, E> {
+        stmt.walk(self)
+    }
     fn visit_expr(&mut self, expr: &mut Expr) -> Result<S, E> {
         expr.walk(self)
     }
@@ -70,6 +73,9 @@ pub trait Visitor<'a, S: Default, E>: Sized {
     }
     fn visit_boolean(&mut self, boolean: &mut bool) -> Result<S, E> {
         Ok(S::default())
+    }
+    fn visit_ty(&mut self, ty: &mut Ty) -> Result<S, E> {
+        ty.walk(self)
     }
 }
 
@@ -165,6 +171,7 @@ impl Visit for Item {
             ItemKind::DimDecl(decl) => decl.visit(visitor),
             ItemKind::UnitDecl(decl) => decl.visit(visitor),
             ItemKind::OpDecl(decl) => decl.visit(visitor),
+            ItemKind::ConstDecl(decl) => decl.visit(visitor),
             ItemKind::FnDecl(decl) => decl.visit(visitor),
             ItemKind::Expr(expr) => visitor.visit_top_level_expr(expr),
         }
@@ -204,6 +211,16 @@ impl Visit for UnitDecl {
 impl Visit for OpDecl {
     fn visit<'a, V: Visitor<'a, S, E>, S: Default, E>(&mut self, visitor: &mut V) -> Result<S, E> {
         visitor.visit_op_decl(self)
+    }
+
+    fn walk<'a, V: Visitor<'a, S, E>, S: Default, E>(&mut self, visitor: &mut V) -> Result<S, E> {
+        Ok(S::default())
+    }
+}
+
+impl Visit for ConstDecl {
+    fn visit<'a, V: Visitor<'a, S, E>, S: Default, E>(&mut self, visitor: &mut V) -> Result<S, E> {
+        todo!()
     }
 
     fn walk<'a, V: Visitor<'a, S, E>, S: Default, E>(&mut self, visitor: &mut V) -> Result<S, E> {
@@ -264,6 +281,19 @@ impl Visit for DimExpr {
     }
 }
 
+impl Visit for Stmt {
+    fn visit<'a, V: Visitor<'a, S, E>, S: Default, E>(&mut self, visitor: &mut V) -> Result<S, E> {
+        visitor.visit_stmt(self)
+    }
+
+    fn walk<'a, V: Visitor<'a, S, E>, S: Default, E>(&mut self, visitor: &mut V) -> Result<S, E> {
+        match &mut self.kind {
+            StmtKind::Expr(expr) => expr.walk(visitor),
+            StmtKind::Return(expr) => expr.walk(visitor),
+        }
+    }
+}
+
 impl Visit for Expr {
     fn visit<'a, V: Visitor<'a, S, E>, S: Default, E>(&mut self, visitor: &mut V) -> Result<S, E> {
         visitor.visit_expr(self)
@@ -287,7 +317,7 @@ impl Visit for Expr {
                 op.visit(visitor)?;
                 expr.visit(visitor)?;
             }
-            ExprKind::Unit(expr, unit) => {
+            ExprKind::UnitCast(expr, unit) => {
                 expr.visit(visitor)?;
                 unit.visit(visitor)?;
             }
@@ -326,6 +356,15 @@ impl Visit for Expr {
             }
             ExprKind::Boolean(boolean) => {
                 visitor.visit_boolean(boolean)?;
+            }
+            ExprKind::Unit(unit) => {
+                unit.visit(visitor)?;
+            }
+            ExprKind::Unit(unit) => {
+                unit.visit(visitor)?;
+            }
+            ExprKind::Type(ty) => {
+                ty.visit(visitor)?;
             }
         };
         Ok(S::default())
@@ -375,6 +414,16 @@ impl Visit for Unit {
 impl Visit for Number {
     fn visit<'a, V: Visitor<'a, S, E>, S: Default, E>(&mut self, visitor: &mut V) -> Result<S, E> {
         visitor.visit_number(self)
+    }
+
+    fn walk<'a, V: Visitor<'a, S, E>, S: Default, E>(&mut self, visitor: &mut V) -> Result<S, E> {
+        Ok(S::default())
+    }
+}
+
+impl Visit for Ty {
+    fn visit<'a, V: Visitor<'a, S, E>, S: Default, E>(&mut self, visitor: &mut V) -> Result<S, E> {
+        visitor.visit_ty(self)
     }
 
     fn walk<'a, V: Visitor<'a, S, E>, S: Default, E>(&mut self, visitor: &mut V) -> Result<S, E> {

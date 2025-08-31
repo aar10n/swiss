@@ -1,4 +1,4 @@
-use super::{Context, Dim, DimExpr, Exception, Float, Integer, Number, Numeric, Quantity, Value};
+use super::{Context, Dim, Exception, Float, Integer, Number, Quantity, VRef, Value, ValueRef};
 
 use crate::ast::{BinaryCoercion, Coercion, FloatConversion};
 use crate::print::ansi::{
@@ -8,6 +8,7 @@ use crate::print::ansi::{
 use crate::print::{PrettyPrint, PrettyString};
 
 use smallvec::SmallVec;
+use ustr::Ustr;
 
 // MARK: Ty
 
@@ -23,9 +24,16 @@ pub enum Ty {
     Dim(Dim),
     List,
     Tuple(SmallVec<[Box<Ty>; 3]>),
+    Unit,
+    Type,
+    Ref(Box<Ty>),
 }
 
 impl Ty {
+    pub fn is_ref(&self) -> bool {
+        matches!(self, Ty::Ref(_))
+    }
+
     /// Returns whether `a` is a stricter or different type than `b`.
     pub fn is_stricter_or_not(a: &Ty, b: &Ty) -> bool {
         match (a, b) {
@@ -37,6 +45,7 @@ impl Ty {
                 .iter()
                 .zip(b.iter())
                 .any(|(a, b)| Ty::is_stricter_or_not(a, b)),
+            (Ty::Ref(a), Ty::Ref(b)) => Ty::is_stricter_or_not(a, b),
             (a, b) if a == b => false,
             _ => false,
         }
@@ -63,6 +72,7 @@ impl Ty {
 
                 Ok(Ty::Tuple(result))
             }
+            (Ty::Ref(a), Ty::Ref(b)) => Ty::unify(ctx, a, b).map(Box::new).map(Ty::Ref),
             (a, b) if a == b => Ok(a.clone()),
             _ => Err(Exception::new(
                 "TypeError",
@@ -101,6 +111,9 @@ impl ToString for Ty {
                 result.push_str(")");
                 result
             }
+            Ty::Unit => "unit".to_owned(),
+            Ty::Type => "type".to_owned(),
+            Ty::Ref(ty) => format!("&{}", ty.to_string()),
         }
     }
 }
@@ -132,6 +145,12 @@ impl PrettyPrint<Context> for Ty {
                 }
                 write!(out, "{RBRAC}", RBRAC = RBRAC)
             }
+            Ty::Unit => write!(out, "{ATTR}unit{RESET}"),
+            Ty::Type => write!(out, "{ATTR}type{RESET}"),
+            Ty::Ref(ty) => {
+                write!(out, "&")?;
+                ty.pretty_print(out, ctx, level)
+            }
         }
     }
 }
@@ -150,9 +169,42 @@ impl CastInto<Value> for Value {
     }
 }
 
+impl CastInto<ValueRef> for Value {
+    fn cast(ctx: &Context, value: Value) -> Result<ValueRef, Exception> {
+        match value {
+            Value::Ref(r) => Ok(r),
+            value => Err(Exception::new(
+                "TypeError",
+                format!(
+                    "expected reference, found {}",
+                    value.ty().pretty_string(ctx)
+                ),
+            )
+            .with_backtrace(ctx.backtrace())),
+        }
+    }
+}
+
+impl<T: Clone + CastFrom<Value>> CastInto<VRef<T>> for Value {
+    fn cast(ctx: &Context, value: Value) -> Result<VRef<T>, Exception> {
+        match value {
+            Value::Ref(r) => CastInto::<VRef<T>>::cast(ctx, r.borrow().clone()),
+            value => Err(Exception::new(
+                "TypeError",
+                format!(
+                    "expected reference, found {}",
+                    value.ty().pretty_string(ctx)
+                ),
+            )
+            .with_backtrace(ctx.backtrace())),
+        }
+    }
+}
+
 impl CastInto<Quantity> for Value {
     fn cast(ctx: &Context, value: Value) -> Result<Quantity, Exception> {
         match value {
+            Value::Ref(r) => CastInto::<Quantity>::cast(ctx, r.borrow().clone()),
             Value::Boolean(b) => Ok(Quantity::new(Number::from(b), Dim::none())),
             Value::Quantity(q) => Ok(q),
             v => Err(Exception::new(
@@ -167,6 +219,7 @@ impl CastInto<Quantity> for Value {
 impl CastInto<Number> for Value {
     fn cast(ctx: &Context, value: Value) -> Result<Number, Exception> {
         match value {
+            Value::Ref(r) => CastInto::<Number>::cast(ctx, r.borrow().clone()),
             Value::Boolean(b) => Ok(Number::from(b)),
             Value::Quantity(q) => {
                 if q.is_dimless() {
@@ -190,6 +243,7 @@ impl CastInto<Number> for Value {
 impl CastInto<Integer> for Value {
     fn cast(ctx: &Context, value: Value) -> Result<Integer, Exception> {
         match value {
+            Value::Ref(r) => CastInto::<Integer>::cast(ctx, r.borrow().clone()),
             Value::Boolean(b) => Ok(Integer::from(b)),
             Value::Quantity(q) if q.is_int() && q.is_dimless() => {
                 Ok(q.number.get_int().unwrap().clone())
@@ -206,6 +260,7 @@ impl CastInto<Integer> for Value {
 impl CastInto<Float> for Value {
     fn cast(ctx: &Context, value: Value) -> Result<Float, Exception> {
         match value {
+            Value::Ref(r) => CastInto::<Float>::cast(ctx, r.borrow().clone()),
             Value::Quantity(q) if q.is_float() && q.is_dimless() => {
                 Ok(q.number.get_float().unwrap().clone())
             }
@@ -221,6 +276,7 @@ impl CastInto<Float> for Value {
 impl CastInto<String> for Value {
     fn cast(ctx: &Context, value: Value) -> Result<String, Exception> {
         match value {
+            Value::Ref(r) => CastInto::<String>::cast(ctx, r.borrow().clone()),
             Value::String(s) => Ok(s),
             value => Err(Exception::new(
                 "TypeError",
@@ -231,9 +287,24 @@ impl CastInto<String> for Value {
     }
 }
 
+impl CastInto<Ustr> for Value {
+    fn cast(ctx: &Context, value: Value) -> Result<Ustr, Exception> {
+        match value {
+            Value::Unit(u) => Ok(u),
+            Value::Ref(r) => CastInto::<Ustr>::cast(ctx, r.borrow().clone()),
+            value => Err(Exception::new(
+                "TypeError",
+                format!("expected ustr, found {}", value.ty().pretty_string(ctx)),
+            )
+            .with_backtrace(ctx.backtrace())),
+        }
+    }
+}
+
 impl CastInto<bool> for Value {
     fn cast(ctx: &Context, value: Value) -> Result<bool, Exception> {
         match value {
+            Value::Ref(r) => CastInto::<bool>::cast(ctx, r.borrow().clone()),
             Value::Boolean(b) => Ok(b),
             Value::Quantity(q) if q.is_dimless() => Ok(q.is_truthy()),
             value => Err(Exception::new(
@@ -248,6 +319,7 @@ impl CastInto<bool> for Value {
 impl CastInto<()> for Value {
     fn cast(ctx: &Context, value: Value) -> Result<(), Exception> {
         match value {
+            Value::Ref(r) => CastInto::<()>::cast(ctx, r.borrow().clone()),
             Value::Empty => Ok(()),
             value => Err(Exception::new(
                 "TypeError",
@@ -292,11 +364,14 @@ impl TryCoerce<Value> for Value {
 impl TryCoerce<Quantity> for Value {
     fn coerce(ctx: &Context, value: Value) -> Value {
         match value {
+            Value::Ref(r) => Value::Ref(r),
             Value::Tuple(t) => Value::Tuple(t),
             Value::List(l) => Value::List(l),
             Value::Quantity(q) => Value::Quantity(q),
             Value::String(s) => Value::String(s),
             Value::Boolean(b) => Value::from(b),
+            Value::Unit(u) => Value::Unit(u),
+            Value::Ty(t) => Value::Ty(t),
             Value::Empty => Value::Empty,
         }
     }
@@ -338,6 +413,16 @@ impl TryCoerce<String> for Value {
     }
 }
 
+impl TryCoerce<Ustr> for Value {
+    fn coerce(ctx: &Context, value: Value) -> Value {
+        match value {
+            Value::Ref(r) => Value::Ref(r),
+            Value::Unit(u) => Value::Unit(u),
+            value => value,
+        }
+    }
+}
+
 impl TryCoerce<bool> for Value {
     fn coerce(ctx: &Context, value: Value) -> Value {
         match value {
@@ -368,7 +453,21 @@ pub mod coerce {
             Ty::Num => TryCoerce::<Quantity>::coerce(ctx, v),
             Ty::Dim(d) => Value::from(Quantity::one().with_dim(d)),
             Ty::List | Ty::Tuple(_) => v,
+            Ty::Unit => v,
+            Ty::Type => v,
             Ty::Empty => Value::Empty,
+            Ty::Ref(ty) => {
+                if let Value::Ref(r) = v {
+                    let v = r.borrow().clone();
+                    if Ty::is_stricter_or_not(&v.ty(), &*ty) {
+                        Value::Ref(r)
+                    } else {
+                        v
+                    }
+                } else {
+                    v
+                }
+            }
         }
     }
 

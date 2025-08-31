@@ -1,4 +1,4 @@
-use crate::ast::{Expr, ListNode, Path};
+use crate::ast::{Expr, ListNode, Path, Stmt};
 pub use crate::ast::{OpAssoc, OpKind};
 use crate::source::{SourceSpan, Spanned};
 
@@ -14,7 +14,7 @@ pub struct Operator {
     pub kind: OpKind,
     pub assoc: OpAssoc,
     pub prec: isize,
-    pub func: Either<Path, ListNode<Expr>>,
+    pub func: Either<Path, ListNode<Stmt>>,
 }
 
 impl Operator {
@@ -23,7 +23,7 @@ impl Operator {
         kind: OpKind,
         assoc: OpAssoc,
         prec: isize,
-        func: Either<Path, ListNode<Expr>>,
+        func: Either<Path, ListNode<Stmt>>,
     ) -> Self {
         Self {
             name,
