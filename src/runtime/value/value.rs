@@ -4,7 +4,7 @@ pub use super::{VRef, ValueRef};
 
 pub use crate::id::VarId;
 use crate::print::ansi::{NUMBER, RESET};
-use crate::print::{PrettyPrint, PrettyString};
+use crate::print::{EvalPrint, PrettyPrint, PrettyString};
 
 use smallvec::SmallVec;
 use std::cell::RefCell;
@@ -154,15 +154,21 @@ impl<T: Into<Quantity>> From<T> for Value {
     }
 }
 
-// impl From<ValueRef> for Value {
-//     fn from(value: ValueRef) -> Self {
-//         Value::Ref(value)
-//     }
-// }
+impl From<ValueRef> for Value {
+    fn from(value: ValueRef) -> Self {
+        Value::Ref(value)
+    }
+}
 
 impl From<String> for Value {
     fn from(value: String) -> Self {
         Value::String(value)
+    }
+}
+
+impl From<usize> for Value {
+    fn from(value: usize) -> Self {
+        Value::Quantity(Quantity::from(Number::from(value)))
     }
 }
 
@@ -211,6 +217,48 @@ impl PrettyPrint<Context> for Value {
                 write!(out, "]")
             }
             Value::Quantity(q) => q.pretty_print(out, ctx, level),
+            Value::String(s) => write!(out, "{:?}", s),
+            Value::Boolean(b) => write!(out, "{}", b),
+            Value::Unit(u) => write!(out, "{:?}", u),
+            Value::Ty(t) => write!(out, "{:?}", t),
+            Value::Empty => write!(out, "()"),
+        }
+    }
+}
+
+impl EvalPrint<Context> for Value {
+    fn display_print<Output: std::io::Write>(
+        &self,
+        out: &mut Output,
+        ctx: &mut Context,
+        level: usize,
+    ) -> std::io::Result<()> {
+        match &self {
+            Value::Ref(r) => {
+                write!(out, "&")?;
+                r.borrow().display_print(out, ctx, level)
+            }
+            Value::Tuple(t) => {
+                write!(out, "(")?;
+                for (i, v) in t.iter().enumerate() {
+                    if i > 0 {
+                        write!(out, ", ")?;
+                    }
+                    v.display_print(out, ctx, level)?;
+                }
+                write!(out, ")")
+            }
+            Value::List(l) => {
+                write!(out, "[")?;
+                for (i, v) in l.borrow().iter().enumerate() {
+                    if i > 0 {
+                        write!(out, ", ")?;
+                    }
+                    v.display_print(out, ctx, level)?;
+                }
+                write!(out, "]")
+            }
+            Value::Quantity(q) => q.display_print(out, ctx, level),
             Value::String(s) => write!(out, "{:?}", s),
             Value::Boolean(b) => write!(out, "{}", b),
             Value::Unit(u) => write!(out, "{:?}", u),

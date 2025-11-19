@@ -8,7 +8,36 @@ use std::io;
 
 pub const TABWIDTH: &str = "  ";
 
-/// A trait for values that can be pretty-printed.
+/// A trait for values that can be evaluated to produce output.
+/// This is like `PrettyPrint`, but with a mutable context to enable evaluation.
+pub trait EvalPrint<Ctx, Info: Clone = usize> {
+    fn display_print<Output: io::Write>(
+        &self,
+        out: &mut Output,
+        ctx: &mut Ctx,
+        info: Info,
+    ) -> io::Result<()>;
+}
+
+/// A trait for values that can be display-printed to a string with evaluation.
+pub trait DisplayString<Ctx, Info: Clone>: EvalPrint<Ctx, Info> {
+    fn display_string(&self, ctx: &mut Ctx) -> String;
+    fn display_string_info(&self, ctx: &mut Ctx, info: Info) -> String {
+        let mut buf = Vec::new();
+        self.display_print(&mut buf, ctx, info).unwrap();
+        String::from_utf8(buf).unwrap()
+    }
+}
+
+impl<T: EvalPrint<Ctx, Info>, Ctx, Info: Default + Clone> DisplayString<Ctx, Info> for T {
+    fn display_string(&self, ctx: &mut Ctx) -> String {
+        let mut buf = Vec::new();
+        self.display_print(&mut buf, ctx, Info::default()).unwrap();
+        String::from_utf8(buf).unwrap()
+    }
+}
+
+/// A trait for values that can be pretty-printed for debugging.
 pub trait PrettyPrint<Ctx, Info: Clone = usize> {
     fn pretty_print<Output: io::Write>(
         &self,

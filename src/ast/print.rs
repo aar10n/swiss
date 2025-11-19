@@ -11,17 +11,6 @@ use std::io;
 
 type Context = ();
 
-impl<T: PrettyPrint<Context>> PrettyPrint<Context> for Spanned<T> {
-    fn pretty_print<Output: io::Write>(
-        &self,
-        out: &mut Output,
-        ctx: &Context,
-        level: usize,
-    ) -> io::Result<()> {
-        self.value().pretty_print(out, ctx, level)
-    }
-}
-
 impl<T: PrettyPrint<Context>> PrettyPrint<Context> for KindNode<T> {
     fn pretty_print<Output: io::Write>(
         &self,
@@ -196,6 +185,24 @@ impl PrettyPrint<Context> for UnitDecl {
     }
 }
 
+impl PrettyPrint<Context> for UnitImpl {
+    fn pretty_print<Output: io::Write>(
+        &self,
+        out: &mut Output,
+        ctx: &Context,
+        level: usize,
+    ) -> io::Result<()> {
+        let tab = TABWIDTH.repeat(level);
+        out.write_all(tab.as_bytes())?;
+
+        writeln!(out, "{KIND}UnitImpl{RESET} ")?;
+        for function in &self.functions {
+            function.pretty_print(out, ctx, level + 1)?;
+        }
+        Ok(())
+    }
+}
+
 impl PrettyPrint<Context> for OpDecl {
     fn pretty_print<Output: io::Write>(
         &self,
@@ -305,6 +312,11 @@ impl PrettyPrint<Context> for DimExpr {
             }
             DimExprKind::Ident(ident) => ident.pretty_print(out, ctx, 0),
             DimExprKind::Number(number) => number.pretty_print(out, ctx, 0),
+            DimExprKind::Unit(suffix) => {
+                write!(out, "[")?;
+                suffix.pretty_print(out, ctx, 0)?;
+                write!(out, "]")
+            }
         }
     }
 }
@@ -319,6 +331,8 @@ impl PrettyPrint<Context> for Stmt {
         let tab = TABWIDTH.repeat(level);
         out.write_all(tab.as_bytes())?;
         match &self.kind {
+            StmtKind::Break => write!(out, "{KEYWORD}Break{RESET}"),
+            StmtKind::Continue => write!(out, "{KEYWORD}Continue{RESET}"),
             StmtKind::Expr(expr) => {
                 write!(out, "{KIND}Expr{RESET} ")?;
                 expr.pretty_print(out, ctx, 0)
@@ -423,6 +437,10 @@ impl PrettyPrint<Context> for Expr {
                     }
                 }
                 write!(out, ")")
+            }
+            ExprKind::Splat(expr) => {
+                write!(out, "{LBRAC}...{RBRAC}")?;
+                expr.pretty_print(out, ctx, 0)
             }
             ExprKind::List(list) => {
                 write!(out, "{LBRAC}")?;

@@ -55,7 +55,7 @@ impl PrettyPrinter {
         write!(out, "  {}:{}", source_ref.file_name(), start_loc,)?;
         let max_cols = if start_loc.line != end_loc.line {
             writeln!(out, "-{}", end_loc)?; // multiline
-        } else if (end_loc.column - start_loc.column) > 1 {
+        } else if end_loc.column.saturating_sub(start_loc.column) > 1 {
             writeln!(out, "-{}", end_loc.column)?; // multicolumn
         } else {
             writeln!(out)?; // single location

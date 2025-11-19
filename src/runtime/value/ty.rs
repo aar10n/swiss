@@ -439,7 +439,7 @@ pub mod coerce {
     use crate::ast::Coercion;
 
     /// Coerce a value to a target type.
-    pub fn to_ty(ctx: &Context, v: Value, ty: Ty) -> Value {
+    pub fn to_ty(ctx: &mut Context, v: Value, ty: Ty) -> Value {
         if ctx.config.coercion.is_never() {
             return v;
         }
@@ -451,7 +451,45 @@ pub mod coerce {
             Ty::Int => TryCoerce::<Integer>::coerce(ctx, v),
             Ty::Str => TryCoerce::<String>::coerce(ctx, v),
             Ty::Num => TryCoerce::<Quantity>::coerce(ctx, v),
-            Ty::Dim(d) => Value::from(Quantity::one().with_dim(d)),
+            Ty::Dim(d) => {
+                // If this dimension has a target unit (e.g., [rad]), perform automatic conversion
+                if let Some((target_suffix, target_conv)) = &d.unit {
+                    match v {
+                        Value::Quantity(q) => {
+                            // Check dimension compatibility (but don't fail here, type checking will catch mismatches)
+                            if q.dim.expr != d.expr {
+                                // Dimension mismatch - return as-is
+                                return Value::Quantity(q);
+                            }
+
+                            // Step 1: Convert to base units if needed
+                            let base_value = if let Some((source_unit, source_conv)) = &q.dim.unit {
+                                if source_unit == target_suffix {
+                                    // Same unit, no conversion needed
+                                    q.number.clone()
+                                } else {
+                                    // Convert to base units first
+                                    source_conv.to_base(ctx, q.number.clone()).unwrap_or(q.number.clone())
+                                }
+                            } else {
+                                // No source unit (dimensionless or base unit)
+                                q.number.clone()
+                            };
+
+                            // Step 2: Convert from base units to target unit
+                            let target_value = target_conv.from_base(ctx, base_value.clone()).unwrap_or(base_value);
+
+                            // Create new Dim with the target unit
+                            let result_dim = Dim::new(d.expr.clone(), Some((*target_suffix, target_conv.clone())));
+                            Value::Quantity(Quantity::new(target_value, result_dim))
+                        }
+                        _ => v, // Not a quantity, return as-is
+                    }
+                } else {
+                    // No unit constraint, just ensure it has the right dimension
+                    Value::from(Quantity::one().with_dim(d))
+                }
+            }
             Ty::List | Ty::Tuple(_) => v,
             Ty::Unit => v,
             Ty::Type => v,
@@ -472,7 +510,7 @@ pub mod coerce {
     }
 
     /// Coerce a pair of binary quantities to a common underlying type and dimension.
-    pub fn binary_pair(ctx: &Context, lhs: Quantity, rhs: Quantity) -> (Quantity, Quantity) {
+    pub fn binary_pair(ctx: &mut Context, lhs: Quantity, rhs: Quantity) -> (Quantity, Quantity) {
         match ctx.config.binary_coercion {
             BinaryCoercion::Left => {
                 let rhs = to_ty(ctx, rhs.into(), lhs.ty());

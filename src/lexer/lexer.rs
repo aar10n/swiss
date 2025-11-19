@@ -18,6 +18,7 @@ use ustr::Ustr;
 static IDENTIFIER_CHARS_EXTRA: CharSet = CharSet::new()
     .add_chars("'") // Single quote
     .add_chars("′″‴") // Primes
+    .add_chars("°μΩ") // Degree, micro, ohm symbols commonly used in units
     ;
 
 #[dynamic]
@@ -52,6 +53,7 @@ pub struct Lexer<'a> {
     chars: PeekableN<Chars<'a>>,
     state: LexerState,
     offset: usize,
+    trace_on: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -62,6 +64,7 @@ impl<'a> Lexer<'a> {
             chars: PeekableN::new(source.chars(), 2),
             state: LexerState::StartOfLine,
             offset: 0,
+            trace_on: std::env::var("TRACE_LEXER").is_ok(),
         }
     }
 
@@ -80,6 +83,10 @@ impl<'a> Lexer<'a> {
     fn next_token(&mut self) -> Option<LexResult<(Token, SourceSpan)>> {
         let ch = self.chars.peek().copied()?;
         let start_off = self.offset;
+
+        if self.trace_on {
+            eprintln!("[TRACE_LEXER] next_token at offset {}: ch={:?}", start_off, ch);
+        }
 
         let result = if is_decimal_digit(ch) {
             self.lex_number()
@@ -142,6 +149,14 @@ impl<'a> Lexer<'a> {
 
         let end_off = self.offset;
         let span = SourceSpan::new(self.source_id, start_off, end_off);
+
+        if self.trace_on {
+            match &result {
+                Ok(token) => eprintln!("[TRACE_LEXER] token: {:?} @ {}..{}", token, start_off, end_off),
+                Err(_) => eprintln!("[TRACE_LEXER] error at {}..{}", start_off, end_off),
+            }
+        }
+
         Some(result.map(|token| (token, span)))
     }
 
@@ -411,7 +426,7 @@ fn is_decimal_digit(ch: char) -> bool {
 }
 
 fn is_identifier_char_start(ch: char) -> bool {
-    UnicodeXID::is_xid_start(ch) || ch == '_'
+    UnicodeXID::is_xid_start(ch) || ch == '_' || IDENTIFIER_CHARS_EXTRA.contains(ch)
 }
 
 fn is_identifier_char_continue(ch: char) -> bool {

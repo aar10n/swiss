@@ -1,11 +1,12 @@
 use super::dimension::{DimExpr, Dimension, DimensionTable};
+use super::interface::{Interface, InterfaceTable};
 use super::name::{Constant, Function, Name, NameResult, NameTable, Param};
 use super::operator::{OpAssoc, OpKind, Operator, OperatorTable};
 use super::path::{PathLike, PathTree};
 use super::unit::{Unit, UnitKind, UnitTable};
 use super::{DeclError, NameError};
 
-use crate::id::module_id;
+use crate::id::{module_id, var_id, VarId};
 use crate::source::{source_id, SourceFile, SourceId, SourceSpan, Spanned};
 
 pub use crate::id::ModuleId;
@@ -26,8 +27,10 @@ pub struct Module {
     pub name: Ustr,
     pub names: NameTable,
     pub dimensions: DimensionTable,
+    pub interfaces: InterfaceTable,
     pub operators: OperatorTable,
     pub units: UnitTable,
+    pub unnamed: BTreeMap<VarId, Function>,
 }
 
 impl Module {
@@ -38,8 +41,10 @@ impl Module {
             name,
             names: NameTable::new(),
             dimensions: DimensionTable::new(),
+            interfaces: InterfaceTable::new(),
             operators: OperatorTable::new_with_builtins(),
             units: UnitTable::new(),
+            unnamed: BTreeMap::new(),
         }
     }
 
@@ -63,6 +68,11 @@ impl Module {
         self
     }
 
+    pub fn with_interface(&mut self, interface: Interface) -> &mut Self {
+        self.register_interface(interface).unwrap();
+        self
+    }
+
     pub fn with_operator(&mut self, op: Operator) -> &mut Self {
         self.register_operator(op).unwrap();
         self
@@ -78,6 +88,19 @@ impl Module {
         }
 
         self.dimensions.insert(dim);
+        Ok(())
+    }
+
+    pub fn register_interface(&mut self, interface: Interface) -> Result<(), DeclError> {
+        if let Some(existing) = self.interfaces.get(interface.name.raw) {
+            return Err(DeclError::new(
+                "interface",
+                interface.name.to_string_inner(),
+                existing.name.span,
+            ));
+        }
+
+        self.interfaces.insert(interface);
         Ok(())
     }
 
@@ -114,6 +137,17 @@ impl Module {
 
         self.units.insert(unit);
         Ok(())
+    }
+
+    /// Update an existing unit (used during interpretation to replace placeholder units)
+    pub fn update_unit(&mut self, unit: Unit) {
+        self.units.insert(unit);
+    }
+
+    pub fn register_unnamed_function(&mut self, func: Function) -> VarId {
+        let id = var_id::next();
+        self.unnamed.insert(id, func);
+        id
     }
 
     // Item Resolution
@@ -173,6 +207,14 @@ impl Module {
         self.units
             .resolve_dimexpr(expr)
             .ok_or_else(|| NameError::new("undefined unit", expr.to_string().into()))
+    }
+
+    pub fn get_unnamed_function(&self, id: VarId) -> Option<&Function> {
+        self.unnamed.get(&id)
+    }
+
+    pub fn get_interface(&self, name: &str) -> Option<&Interface> {
+        self.interfaces.get(name.into())
     }
 }
 

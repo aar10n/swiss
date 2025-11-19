@@ -30,7 +30,9 @@ const BRACK_DELIM: (Token, Token) = (Token::LDelim("["), Token::RDelim("]"));
 
     dimension_decl ::= 'dimension' _ <ident> _ ['=' <dim_expr>]
     base_unit_decl ::= 'base' _ 'unit' _ <ident> _ [<suffix_list>] _ '=' _ <dim_expr>
-    sub_unit_decl ::= 'unit' _ <ident> _ [<suffix_list>] '[' <dim_expr> ']' _ '=' <num_expr>
+    sub_unit_decl ::= 'unit' _ <ident> _ [<suffix_list>] '[' <dim_expr> ']' _ '=' (<num_expr> | <unit_impl>)
+
+    unit_impl ::= '{' '\n' _ <fn_decl> ('\n' _ <fn_decl> _)* _ '}'
 
     fn_decl ::= 'fn' _ <ident> _ <param_list> _ [<dim_ret>|<type>] _ <block_expr>
 
@@ -60,6 +62,7 @@ const BRACK_DELIM: (Token, Token) = (Token::LDelim("["), Token::RDelim("]"));
     expr_term ::= '(' _ <expr> _ [(_ <expr> _) ++ ','] ')'
                 | '[' (_ <expr> _) ** ',' ']'
                 | <prefix_op> _ <expr>
+                | <expr_atom> _ '...'
                 | <expr_atom>
 
     expr_atom ::= 'if' <expr> <block_expr> 'else' <block_expr>
@@ -174,9 +177,29 @@ impl<'a> Parser<'a> {
                 Some(Item::import(path))
             } else if next_token == &Token::Keyword(Keyword::Base) {
                 let decl = parser.parse_base_unit_decl()?;
+                // Register unit suffixes during parsing so they're available for is_unit_suffix() checks
+                // Use a placeholder dimension that will be replaced during interpretation
+                let placeholder_unit = rt::Unit::new(
+                    rt::UnitKind::BaseUnit,
+                    decl.name.as_spanned_ustr(),
+                    decl.suffixes.iter().map(|s| s.as_spanned_ustr()).collect(),
+                    rt::DimExpr::Number(rt::Number::one()), // Placeholder, will be replaced
+                    rt::Number::one(),
+                );
+                parser.ctx.register_unit(placeholder_unit)?;
                 Some(Item::unit_decl(decl))
             } else if next_token == &Token::Keyword(Keyword::Unit) {
                 let decl = parser.parse_sub_unit_decl()?;
+                // Register unit suffixes during parsing so they're available for is_unit_suffix() checks
+                // Use a placeholder dimension that will be replaced during interpretation
+                let placeholder_unit = rt::Unit::new(
+                    rt::UnitKind::SubUnit,
+                    decl.name.as_spanned_ustr(),
+                    decl.suffixes.iter().map(|s| s.as_spanned_ustr()).collect(),
+                    rt::DimExpr::Number(rt::Number::one()), // Placeholder, will be replaced
+                    rt::Number::one(),
+                );
+                parser.ctx.register_unit(placeholder_unit)?;
                 Some(Item::unit_decl(decl))
             } else if next_token == &Token::Keyword(Keyword::Dimension) {
                 let decl = parser.parse_dim_decl()?;
@@ -398,7 +421,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    // sub_unit_decl ::= 'unit' _ <ident> _ [<suffix_list>] '[' <dim_expr> ']' _ '=' <expr>
+    // sub_unit_decl ::= 'unit' _ <ident> _ [<suffix_list>] '[' <dim_expr> ']' _ '=' (<expr> | <unit_impl>)
     fn parse_sub_unit_decl(&mut self) -> ParseResult<UnitDecl> {
         self.span_and_trace("parse_sub_unit_decl", |parser| {
             parser.expect(Token::Keyword(Keyword::Unit), "expected 'unit'")?;
@@ -427,8 +450,35 @@ impl<'a> Parser<'a> {
             parser.expect(Token::Assign, "expected '='")?;
             parser.consume_any(Token::Space);
 
-            let scalar = parser.parse_expr(isize::MIN)?;
-            Ok(UnitDecl::sub_unit(name, suffixes, dimension, scalar))
+            let value = if parser.peek_token() == &Token::LDelim("{") {
+                let unit_impl = parser.parse_unit_impl()?;
+                Right(unit_impl)
+            } else {
+                let expr = parser.parse_expr(isize::MIN)?;
+                Left(expr)
+            };
+            Ok(UnitDecl::sub_unit(name, suffixes, dimension, value))
+        })
+    }
+
+    // unit_impl ::= '{' '\n' _ <fn_decl> ('\n' _ <fn_decl> _)* _ '}'
+    fn parse_unit_impl(&mut self) -> ParseResult<UnitImpl> {
+        self.span_and_trace("parse_unit_impl", |parser| {
+            parser.expect(Token::LDelim("{"), "expected '{'")?;
+            parser.consume_any(Token::NewLine);
+            parser.consume_any(Token::Space);
+
+            let mut functions = vec![];
+            while parser.peek_token() != &Token::RDelim("}") {
+                let func = parser.parse_fn_decl()?;
+                functions.push(func);
+
+                parser.consume_any(Token::NewLine);
+                parser.consume_any(Token::Space);
+            }
+
+            parser.expect(Token::RDelim("}"), "expected '}'")?;
+            Ok(UnitImpl::new(functions))
         })
     }
 
@@ -606,7 +656,9 @@ impl<'a> Parser<'a> {
         })
     }
 
-    // stmt ::= 'return' _ <expr>
+    // stmt ::= 'break'
+    //        | 'continue'
+    //        | 'return' _ <expr>
     //        | <expr>
     fn parse_stmt(&mut self) -> ParseResult<Stmt> {
         self.span_and_trace("parse_stmt", |parser| {
@@ -617,6 +669,13 @@ impl<'a> Parser<'a> {
                 parser.consume_any(Token::Space);
                 let expr = parser.parse_expr(isize::MIN)?;
                 Ok(Stmt::return_(expr))
+            } else if parser.consume_one(Token::Keyword(Keyword::Break)).is_some() {
+                Ok(Stmt::break_())
+            } else if parser
+                .consume_one(Token::Keyword(Keyword::Continue))
+                .is_some()
+            {
+                Ok(Stmt::continue_())
             } else {
                 let expr = parser.parse_expr(isize::MIN)?;
                 Ok(Stmt::expr(expr))
@@ -626,6 +685,7 @@ impl<'a> Parser<'a> {
     // expr ::= <expr_term> _ <infix_op> _ <expr>
     //       | <expr_term> _ <postfix_op>
     //       | <expr_term> _ <unit>
+    //       | <expr_term> _ '...'
     //       | <expr_term>
     fn parse_expr(&mut self, min_prec: isize) -> ParseResult<Expr> {
         self.trace(&format!("parse_expr [min_prec={}]", min_prec), |parser| {
@@ -688,6 +748,8 @@ impl<'a> Parser<'a> {
                         return Err(SyntaxError::new("invalid unit cast", parser.position()).into());
                     }
                     lhs = Expr::unit_cast(lhs, unit);
+                } else if parser.consume_one(Token::TripleDot).is_some() {
+                    lhs = Expr::splat(lhs);
                 } else {
                     break;
                 }
@@ -755,7 +817,7 @@ impl<'a> Parser<'a> {
     }
 
     // expr_atom ::= 'if' <expr> <block_expr> 'else' <block_expr>
-    //             | 'for' <bind_pat> ':=' <expr> <block_expr>
+    //             | 'for' <bind_pat> ':=' 'range' <expr> <block_expr>
     //             | <path> [ <args_list> ]
     //             | <number>
     //             | <string>
@@ -779,6 +841,8 @@ impl<'a> Parser<'a> {
                 let pat = parser.parse_bind_pat()?;
                 parser.consume_any(Token::Space);
                 parser.expect(Token::RangeAssign, "expected ':='")?;
+                parser.consume_any(Token::Space);
+                parser.expect(Token::Keyword(Keyword::Range), "expected 'range'")?;
                 parser.consume_any(Token::Space);
                 let iter = parser.parse_expr(isize::MIN)?;
                 parser.consume_any(Token::Space);

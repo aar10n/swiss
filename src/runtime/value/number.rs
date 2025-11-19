@@ -200,28 +200,6 @@ impl Number {
         }
     }
 
-    pub fn safe_pow(ctx: &Context, a: Number, b: Number) -> Result<Number, Exception> {
-        match (a, b) {
-            (Number::Int(a), Number::Int(b)) => {
-                if b < 0 {
-                    let prec = ctx.config.float_precision;
-                    Ok(Number::Float(
-                        Float::with_val(prec, a).pow(Float::with_val(prec, -b)),
-                    ))
-                } else {
-                    Ok(Number::Int(a.pow(b.to_u32().unwrap())))
-                }
-            }
-            (Number::Float(a), Number::Float(b)) => Ok(Number::Float(a.pow(b))),
-            (Number::Int(a), Number::Float(b)) => Ok(Number::Float(
-                Float::with_val(ctx.config.float_precision, a).pow(b),
-            )),
-            (Number::Float(a), Number::Int(b)) => Ok(Number::Float(
-                a.pow(Float::with_val(ctx.config.float_precision, b)),
-            )),
-        }
-    }
-
     // MARK: Bitwise Functions
 
     pub fn safe_bit_not(ctx: &Context, a: Number) -> Result<Number, Exception> {
@@ -337,6 +315,249 @@ impl Number {
     pub fn safe_ge(ctx: &Context, a: Number, b: Number) -> Result<Number, Exception> {
         impl_safe_cmp_op!(ctx, a, b, ge)
     }
+
+    // MARK: Logarithmic functions
+
+    pub fn safe_ln(ctx: &Context, a: Number) -> Result<Number, Exception> {
+        let a = a.into_float(ctx)?;
+        if a <= 0.0 {
+            return Err(Exception::new(
+                "ValueError",
+                "cannot compute logarithm of non-positive number".to_owned(),
+            )
+            .with_backtrace(ctx.backtrace()));
+        }
+        Ok(Number::Float(a.ln()))
+    }
+
+    pub fn safe_log2(ctx: &Context, a: Number) -> Result<Number, Exception> {
+        let a = a.into_float(ctx)?;
+        if a <= 0.0 {
+            return Err(Exception::new(
+                "ValueError",
+                "cannot compute logarithm of non-positive number".to_owned(),
+            )
+            .with_backtrace(ctx.backtrace()));
+        }
+
+        let res = a.log2();
+        if res.is_integer() {
+            Ok(Number::Int(res.to_integer().unwrap()))
+        } else {
+            Ok(Number::Float(res))
+        }
+    }
+
+    pub fn safe_log10(ctx: &Context, a: Number) -> Result<Number, Exception> {
+        let a = a.into_float(ctx)?;
+        if a <= 0.0 {
+            return Err(Exception::new(
+                "ValueError",
+                "cannot compute logarithm of non-positive number".to_owned(),
+            )
+            .with_backtrace(ctx.backtrace()));
+        }
+        Ok(Number::Float(a.log10()))
+    }
+
+    // MARK: Power and Root functions
+
+    pub fn safe_pow(ctx: &Context, a: Number, b: Number) -> Result<Number, Exception> {
+        match (a, b) {
+            (Number::Int(a), Number::Int(b)) => {
+                if b < 0 {
+                    let prec = ctx.config.float_precision;
+                    Ok(Number::Float(
+                        Float::with_val(prec, a).pow(Float::with_val(prec, -b)),
+                    ))
+                } else {
+                    Ok(Number::Int(a.pow(b.to_u32().unwrap())))
+                }
+            }
+            (Number::Float(a), Number::Float(b)) => Ok(Number::Float(a.pow(b))),
+            (Number::Int(a), Number::Float(b)) => Ok(Number::Float(
+                Float::with_val(ctx.config.float_precision, a).pow(b),
+            )),
+            (Number::Float(a), Number::Int(b)) => Ok(Number::Float(
+                a.pow(Float::with_val(ctx.config.float_precision, b)),
+            )),
+        }
+    }
+
+    pub fn safe_sqrt(ctx: &Context, a: Number) -> Result<Number, Exception> {
+        match a {
+            Number::Int(a) => {
+                if a < 0 {
+                    return Err(Exception::new(
+                        "ValueError",
+                        "cannot compute square root of negative integer".to_owned(),
+                    )
+                    .with_backtrace(ctx.backtrace()));
+                }
+                let sqrt = Float::with_val(ctx.config.float_precision, a).sqrt();
+                if sqrt.is_integer() {
+                    Ok(Number::Int(
+                        sqrt.to_integer().unwrap_or_else(|| Integer::new()),
+                    ))
+                } else {
+                    Ok(Number::Float(sqrt))
+                }
+            }
+            Number::Float(a) => {
+                if a < 0.0 {
+                    return Err(Exception::new(
+                        "ValueError",
+                        "cannot compute square root of negative float".to_owned(),
+                    )
+                    .with_backtrace(ctx.backtrace()));
+                }
+                Ok(Number::Float(a.sqrt()))
+            }
+        }
+    }
+
+    pub fn safe_cbrt(ctx: &Context, a: Number) -> Result<Number, Exception> {
+        match a {
+            Number::Int(a) => {
+                let cbrt = Float::with_val(ctx.config.float_precision, a).cbrt();
+                if cbrt.is_integer() {
+                    Ok(Number::Int(
+                        cbrt.to_integer().unwrap_or_else(|| Integer::new()),
+                    ))
+                } else {
+                    Ok(Number::Float(cbrt))
+                }
+            }
+            Number::Float(a) => Ok(Number::Float(a.cbrt())),
+        }
+    }
+
+    // MARK: Rounding functions
+
+    pub fn safe_floor(ctx: &Context, a: Number) -> Result<Number, Exception> {
+        match a {
+            Number::Int(v) => Ok(Number::Int(v)),
+            Number::Float(v) => Ok(Number::Float(v.floor())),
+        }
+    }
+
+    pub fn safe_ceil(ctx: &Context, a: Number) -> Result<Number, Exception> {
+        match a {
+            Number::Int(v) => Ok(Number::Int(v)),
+            Number::Float(v) => Ok(Number::Float(v.ceil())),
+        }
+    }
+
+    pub fn safe_round(ctx: &Context, a: Number) -> Result<Number, Exception> {
+        match a {
+            Number::Int(v) => Ok(Number::Int(v)),
+            Number::Float(v) => Ok(Number::Float(v.round())),
+        }
+    }
+
+    pub fn safe_trunc(ctx: &Context, a: Number) -> Result<Number, Exception> {
+        match a {
+            Number::Int(v) => Ok(Number::Int(v)),
+            Number::Float(v) => Ok(Number::Float(v.trunc())),
+        }
+    }
+
+    // MARK: Trigonometric Functions
+
+    pub fn safe_sin(ctx: &Context, a: Number) -> Result<Number, Exception> {
+        let a = a.into_float(ctx)?;
+        Ok(Number::Float(a.sin()))
+    }
+
+    pub fn safe_cos(ctx: &Context, a: Number) -> Result<Number, Exception> {
+        let a = a.into_float(ctx)?;
+        Ok(Number::Float(a.cos()))
+    }
+
+    pub fn safe_tan(ctx: &Context, a: Number) -> Result<Number, Exception> {
+        let a = a.into_float(ctx)?;
+        Ok(Number::Float(a.tan()))
+    }
+
+    pub fn safe_asin(ctx: &Context, a: Number) -> Result<Number, Exception> {
+        let a = a.into_float(ctx)?;
+        if a < -1.0 || a > 1.0 {
+            return Err(Exception::new(
+                "ValueError",
+                "cannot compute arcsine of value outside the range [-1, 1]".to_owned(),
+            )
+            .with_backtrace(ctx.backtrace()));
+        }
+        Ok(Number::Float(a.asin()))
+    }
+
+    pub fn safe_acos(ctx: &Context, a: Number) -> Result<Number, Exception> {
+        let a = a.into_float(ctx)?;
+        if a < -1.0 || a > 1.0 {
+            return Err(Exception::new(
+                "ValueError",
+                "cannot compute arccosine of value outside the range [-1, 1]".to_owned(),
+            )
+            .with_backtrace(ctx.backtrace()));
+        }
+        Ok(Number::Float(a.acos()))
+    }
+
+    pub fn safe_atan(ctx: &Context, a: Number) -> Result<Number, Exception> {
+        let a = a.into_float(ctx)?;
+        Ok(Number::Float(a.atan()))
+    }
+
+    pub fn safe_atan2(ctx: &Context, y: Number, x: Number) -> Result<Number, Exception> {
+        let y = y.into_float(ctx)?;
+        let x = x.into_float(ctx)?;
+        Ok(Number::Float(y.atan2(&x)))
+    }
+
+    pub fn safe_sinh(ctx: &Context, a: Number) -> Result<Number, Exception> {
+        let a = a.into_float(ctx)?;
+        Ok(Number::Float(a.sinh()))
+    }
+
+    pub fn safe_cosh(ctx: &Context, a: Number) -> Result<Number, Exception> {
+        let a = a.into_float(ctx)?;
+        Ok(Number::Float(a.cosh()))
+    }
+
+    pub fn safe_tanh(ctx: &Context, a: Number) -> Result<Number, Exception> {
+        let a = a.into_float(ctx)?;
+        Ok(Number::Float(a.tanh()))
+    }
+
+    pub fn safe_asinh(ctx: &Context, a: Number) -> Result<Number, Exception> {
+        let a = a.into_float(ctx)?;
+        Ok(Number::Float(a.asinh()))
+    }
+
+    pub fn safe_acosh(ctx: &Context, a: Number) -> Result<Number, Exception> {
+        let a = a.into_float(ctx)?;
+        if a < 1.0 {
+            return Err(Exception::new(
+                "ValueError",
+                "cannot compute inverse hyperbolic cosine of value less than 1".to_owned(),
+            )
+            .with_backtrace(ctx.backtrace()));
+        }
+        Ok(Number::Float(a.acosh()))
+    }
+
+    pub fn safe_atanh(ctx: &Context, a: Number) -> Result<Number, Exception> {
+        let a = a.into_float(ctx)?;
+        if a <= -1.0 || a >= 1.0 {
+            return Err(Exception::new(
+                "ValueError",
+                "cannot compute inverse hyperbolic tangent of value outside the range (-1, 1)"
+                    .to_owned(),
+            )
+            .with_backtrace(ctx.backtrace()));
+        }
+        Ok(Number::Float(a.atanh()))
+    }
 }
 
 impl PartialEq for Number {
@@ -390,6 +611,12 @@ impl PrettyPrint<Context> for Number {
             }
         }?;
         write!(out, "{RESET}")
+    }
+}
+
+impl From<usize> for Number {
+    fn from(value: usize) -> Self {
+        Number::Int(Integer::from(value))
     }
 }
 

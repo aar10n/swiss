@@ -165,6 +165,8 @@ impl<Ctx> PrettyPrint<Ctx> for Token {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Keyword {
     Base,
+    Break,
+    Continue,
     Const,
     Dimension,
     Else,
@@ -176,6 +178,7 @@ pub enum Keyword {
     Operator,
     Postfix,
     Prefix,
+    Range,
     Return,
     Unit,
 }
@@ -188,6 +191,8 @@ impl Keyword {
 
 pub static KEYWORDS: phf::Map<&'static str, Keyword> = phf_map! {
     "base" => Keyword::Base,
+    "break" => Keyword::Break,
+    "continue" => Keyword::Continue,
     "const" => Keyword::Const,
     "dimension" => Keyword::Dimension,
     "else" => Keyword::Else,
@@ -199,6 +204,7 @@ pub static KEYWORDS: phf::Map<&'static str, Keyword> = phf_map! {
     "operator" => Keyword::Operator,
     "postfix" => Keyword::Postfix,
     "prefix" => Keyword::Prefix,
+    "range" => Keyword::Range,
     "return" => Keyword::Return,
     "unit" => Keyword::Unit,
 };

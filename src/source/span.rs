@@ -1,3 +1,5 @@
+use crate::print::PrettyPrint;
+
 use super::{SourceId, SourceLoc, SourcePos};
 
 use std::fmt::{Debug, Display};
@@ -224,5 +226,16 @@ impl<T: Display> Display for Spanned<T> {
 impl<T: Debug> Debug for Spanned<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Debug::fmt(&self.raw, f)
+    }
+}
+
+impl<T: PrettyPrint<Ctx>, Ctx> PrettyPrint<Ctx> for Spanned<T> {
+    fn pretty_print<Output: std::io::Write>(
+        &self,
+        out: &mut Output,
+        ctx: &Ctx,
+        info: usize,
+    ) -> std::io::Result<()> {
+        self.raw.pretty_print(out, ctx, info)
     }
 }

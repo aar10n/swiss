@@ -1,3 +1,4 @@
+use super::super::Conversion;
 use super::{Context, Exception, Number};
 
 use crate::ast::{UnitPreference, P};
@@ -16,11 +17,11 @@ pub static NONE_DIM: Dim = Dim::new(DimExpr::one(), None);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Dim {
     pub expr: DimExpr,
-    pub unit: Option<(Ustr, Number)>,
+    pub unit: Option<(Ustr, Conversion)>,
 }
 
 impl Dim {
-    pub fn new(expr: DimExpr, unit: Option<(Ustr, Number)>) -> Self {
+    pub fn new(expr: DimExpr, unit: Option<(Ustr, Conversion)>) -> Self {
         Self {
             expr: expr.normalize(),
             unit,
@@ -94,7 +95,13 @@ impl From<DimExpr> for Dim {
 
 impl From<(DimExpr, Ustr, Number)> for Dim {
     fn from((expr, unit, scale): (DimExpr, Ustr, Number)) -> Self {
-        Self::new(expr, Some((unit, scale)))
+        Self::new(expr, Some((unit, Conversion::Scale(scale))))
+    }
+}
+
+impl From<(DimExpr, Ustr, Conversion)> for Dim {
+    fn from((expr, unit, conv): (DimExpr, Ustr, Conversion)) -> Self {
+        Self::new(expr, Some((unit, conv)))
     }
 }
 

@@ -7,7 +7,6 @@ use crate::runtime::{Context, DeclError, NameError, TypeError};
 use crate::source::{SourcePos, Spanned};
 
 pub use crate::runtime::{Exception, ModuleId, VRef, Value};
-use interp::Interp;
 pub use interp::*;
 
 pub type InterpResult<T> = Result<T, InterpError>;
@@ -18,6 +17,9 @@ pub enum InterpError {
     NameError(NameError),
     TypeError(TypeError),
     Exception(Exception),
+    Break,
+    Continue,
+    Return(Value),
 }
 
 macro_rules! impl_from_error {
@@ -42,6 +44,18 @@ impl IntoErrorCtx<Context> for InterpError {
             InterpError::NameError(err) => err.into_error_ctx(ctx),
             InterpError::TypeError(err) => err.into_error_ctx(ctx),
             InterpError::Exception(err) => err.into_error_ctx(ctx),
+            InterpError::Return(value) => Error::new(
+                format!("'return' used outside of function"),
+                crate::source::SourceSpan::default(),
+            ),
+            InterpError::Break => Error::new(
+                "'break' used outside of loop".to_string(),
+                crate::source::SourceSpan::default(),
+            ),
+            InterpError::Continue => Error::new(
+                "'continue' used outside of loop".to_string(),
+                crate::source::SourceSpan::default(),
+            ),
         }
     }
 }

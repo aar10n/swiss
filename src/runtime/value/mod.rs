@@ -12,7 +12,7 @@ pub use reference::*;
 pub use ty::*;
 pub use value::*;
 
-pub use super::{Context, Exception};
+pub use super::{Context, Conversion, Exception};
 pub use rug::{Float, Integer};
 
 // MARK: Numeric

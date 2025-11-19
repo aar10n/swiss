@@ -2,6 +2,7 @@ pub mod builtin;
 mod context;
 mod dimension;
 mod exception;
+mod interface;
 mod module;
 mod name;
 mod operator;

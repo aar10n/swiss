@@ -1,9 +1,3 @@
-fn min(vals...) {
-  builtin::print("min")
-  for v := vals {
-    builtin::debug(v)
-  }
+for i := range [1, 2, 3, 4, 5] {
+  print(i)
 }
-
-min(1, 2, 3)
-min()

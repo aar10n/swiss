@@ -211,7 +211,7 @@ pub struct UnitDecl {
     pub kind: UnitKind,
     pub suffixes: Vec<Ident>,
     pub dimension: DimExpr,
-    pub scalar: Option<Expr>,
+    pub value: Option<Either<Expr, UnitImpl>>,
 }
 
 impl UnitDecl {
@@ -223,11 +223,16 @@ impl UnitDecl {
             kind: UnitKind::BaseUnit,
             suffixes,
             dimension,
-            scalar: None,
+            value: None,
         }
     }
 
-    pub fn sub_unit(name: Ident, suffixes: Vec<Ident>, dimension: DimExpr, scalar: Expr) -> Self {
+    pub fn sub_unit(
+        name: Ident,
+        suffixes: Vec<Ident>,
+        dimension: DimExpr,
+        value: Either<Expr, UnitImpl>,
+    ) -> Self {
         Self {
             id: node_id::next(),
             span: SourceSpan::default(),
@@ -235,7 +240,7 @@ impl UnitDecl {
             kind: UnitKind::SubUnit,
             suffixes,
             dimension,
-            scalar: Some(scalar),
+            value: Some(value),
         }
     }
 }
@@ -244,6 +249,24 @@ impl UnitDecl {
 pub enum UnitKind {
     BaseUnit,
     SubUnit,
+}
+
+/// A unit implementation.
+#[derive(Clone, Debug)]
+pub struct UnitImpl {
+    id: NodeId,
+    span: SourceSpan,
+    pub functions: Vec<FnDecl>,
+}
+
+impl UnitImpl {
+    pub fn new(functions: Vec<FnDecl>) -> Self {
+        Self {
+            id: node_id::next(),
+            span: SourceSpan::default(),
+            functions,
+        }
+    }
 }
 
 /// An operator declaration.
@@ -408,6 +431,8 @@ pub enum DimExprKind {
     Ident(Ident),
     /// A number.
     Number(Number),
+    /// A unit constraint (e.g., [rad] means "convert to radians").
+    Unit(Ident),
 }
 
 impl DimExpr {
@@ -434,6 +459,10 @@ impl DimExpr {
     pub fn number(number: Number) -> Self {
         Self::new(DimExprKind::Number(number))
     }
+
+    pub fn unit(ident: Ident) -> Self {
+        Self::new(DimExprKind::Unit(ident))
+    }
 }
 
 impl ToString for DimExprKind {
@@ -445,6 +474,7 @@ impl ToString for DimExprKind {
             DimExprKind::Neg(expr) => format!("-{}", expr.to_string()),
             DimExprKind::Ident(ident) => ident.to_string(),
             DimExprKind::Number(number) => number.to_string(),
+            DimExprKind::Unit(ident) => format!("[{}]", ident.to_string()),
         }
     }
 }
@@ -454,11 +484,21 @@ pub type Stmt = KindNode<StmtKind>;
 
 #[derive(Clone, Debug)]
 pub enum StmtKind {
+    Break,
+    Continue,
     Expr(P<Expr>),
     Return(P<Expr>),
 }
 
 impl Stmt {
+    pub fn break_() -> Self {
+        Self::new(StmtKind::Break)
+    }
+
+    pub fn continue_() -> Self {
+        Self::new(StmtKind::Continue)
+    }
+
     pub fn expr(expr: Expr) -> Self {
         Self::new(StmtKind::Expr(expr.into()))
     }
@@ -489,6 +529,8 @@ pub enum ExprKind {
     ForRange(P<BindPat>, P<Expr>, ListNode<Stmt>),
     /// A function call expression.
     FnCall(Path, ListNode<Expr>),
+    /// A splat expression (...)
+    Splat(P<Expr>),
 
     /// A list.
     List(ListNode<Expr>),
@@ -541,6 +583,10 @@ impl Expr {
 
     pub fn fn_call(path: Path, args: ListNode<Expr>) -> Self {
         Self::new(ExprKind::FnCall(path, args))
+    }
+
+    pub fn splat(expr: Expr) -> Self {
+        Self::new(ExprKind::Splat(expr.into()))
     }
 
     pub fn list(items: ListNode<Expr>) -> Self {
@@ -884,6 +930,8 @@ impl_identifiable!(DimDecl);
 impl_spannable!(DimDecl);
 impl_identifiable!(UnitDecl);
 impl_spannable!(UnitDecl);
+impl_identifiable!(UnitImpl);
+impl_spannable!(UnitImpl);
 impl_identifiable!(OpDecl);
 impl_spannable!(OpDecl);
 impl_identifiable!(ConstDecl);

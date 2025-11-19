@@ -26,6 +26,9 @@ pub trait Visitor<'a, S: Default, E>: Sized {
     fn visit_unit_decl(&mut self, decl: &mut UnitDecl) -> Result<S, E> {
         decl.walk(self)
     }
+    fn visit_unit_impl(&mut self, impl_: &mut UnitImpl) -> Result<S, E> {
+        impl_.walk(self)
+    }
     fn visit_op_decl(&mut self, decl: &mut OpDecl) -> Result<S, E> {
         decl.walk(self)
     }
@@ -208,6 +211,17 @@ impl Visit for UnitDecl {
     }
 }
 
+impl Visit for UnitImpl {
+    fn visit<'a, V: Visitor<'a, S, E>, S: Default, E>(&mut self, visitor: &mut V) -> Result<S, E> {
+        visitor.visit_unit_impl(self)
+    }
+
+    fn walk<'a, V: Visitor<'a, S, E>, S: Default, E>(&mut self, visitor: &mut V) -> Result<S, E> {
+        self.functions.visit(visitor)?;
+        Ok(S::default())
+    }
+}
+
 impl Visit for OpDecl {
     fn visit<'a, V: Visitor<'a, S, E>, S: Default, E>(&mut self, visitor: &mut V) -> Result<S, E> {
         visitor.visit_op_decl(self)
@@ -276,6 +290,9 @@ impl Visit for DimExpr {
             DimExprKind::Number(num) => {
                 num.visit(visitor)?;
             }
+            DimExprKind::Unit(suffix) => {
+                suffix.visit(visitor)?;
+            }
         };
         Ok(S::default())
     }
@@ -288,6 +305,8 @@ impl Visit for Stmt {
 
     fn walk<'a, V: Visitor<'a, S, E>, S: Default, E>(&mut self, visitor: &mut V) -> Result<S, E> {
         match &mut self.kind {
+            StmtKind::Break => Ok(S::default()),
+            StmtKind::Continue => Ok(S::default()),
             StmtKind::Expr(expr) => expr.walk(visitor),
             StmtKind::Return(expr) => expr.walk(visitor),
         }
@@ -335,6 +354,9 @@ impl Visit for Expr {
             ExprKind::FnCall(func, args) => {
                 func.visit(visitor)?;
                 args.visit(visitor)?;
+            }
+            ExprKind::Splat(expr) => {
+                expr.visit(visitor)?;
             }
             ExprKind::List(list) => {
                 visitor.visit_list(list)?;

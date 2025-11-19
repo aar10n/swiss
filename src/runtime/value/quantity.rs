@@ -1,10 +1,10 @@
-use super::{Context, Dim, DimExpr, Exception, Number, Ty, Value};
+use super::{Context, Conversion, Dim, DimExpr, Exception, Number, Ty, Value};
 
 use crate::print::ansi::{
     chars::{LBRAC, RBRAC},
     NUMBER, RESET, UNIT,
 };
-use crate::print::{PrettyPrint, PrettyString};
+use crate::print::{EvalPrint, PrettyPrint, PrettyString};
 use crate::source::Spanned;
 
 use rug::ops::Pow;
@@ -76,14 +76,6 @@ impl Quantity {
 
     pub fn get_unit(&self) -> Option<&Ustr> {
         self.dim.unit.as_ref().map(|(unit, _)| unit)
-    }
-
-    pub fn get_scaled(&self, ctx: &Context) -> Result<Number, Exception> {
-        if let Some((_, scale)) = &self.dim.unit {
-            Number::safe_div(ctx, self.number.clone(), scale.clone())
-        } else {
-            Ok(self.number.clone())
-        }
     }
 
     pub fn ty(&self) -> Ty {
@@ -163,15 +155,6 @@ impl Quantity {
         Dim::unify(ctx, a_dim, b_dim)?;
         let number = Number::safe_mod(ctx, a, b)?;
         Ok(Quantity::new(number, Dim::none()))
-    }
-
-    pub fn safe_pow(ctx: &Context, a: Quantity, b: Quantity) -> Result<Quantity, Exception> {
-        let (a, a_dim) = a.into_tuple();
-        let (b, b_dim) = b.into_tuple();
-
-        let dim = Dim::unify(ctx, a_dim, b_dim)?;
-        let number = Number::safe_pow(ctx, a, b)?;
-        Ok(Quantity::new(number, dim))
     }
 
     // MARK: Bitwise Functions
@@ -308,6 +291,152 @@ impl Quantity {
         let number = Number::safe_ge(ctx, a, b)?;
         Ok(Quantity::new(number, Dim::none()))
     }
+
+    // MARK: Logarithmic Functions
+
+    pub fn safe_ln(ctx: &Context, a: Quantity) -> Result<Quantity, Exception> {
+        let (a, a_dim) = a.into_tuple();
+        let number = Number::safe_ln(ctx, a)?;
+        Ok(Quantity::new(number, a_dim))
+    }
+
+    pub fn safe_log2(ctx: &Context, a: Quantity) -> Result<Quantity, Exception> {
+        let (a, a_dim) = a.into_tuple();
+        let number = Number::safe_log2(ctx, a)?;
+        Ok(Quantity::new(number, a_dim))
+    }
+
+    pub fn safe_log10(ctx: &Context, a: Quantity) -> Result<Quantity, Exception> {
+        let (a, a_dim) = a.into_tuple();
+        let number = Number::safe_log10(ctx, a)?;
+        Ok(Quantity::new(number, a_dim))
+    }
+
+    // MARK: Power and Root Functions
+
+    pub fn safe_pow(ctx: &Context, a: Quantity, b: Quantity) -> Result<Quantity, Exception> {
+        let (a, a_dim) = a.into_tuple();
+        let (b, b_dim) = b.into_tuple();
+
+        let dim = Dim::unify(ctx, a_dim, b_dim)?;
+        let number = Number::safe_pow(ctx, a, b)?;
+        Ok(Quantity::new(number, dim))
+    }
+
+    pub fn safe_sqrt(ctx: &Context, a: Quantity) -> Result<Quantity, Exception> {
+        let (a, a_dim) = a.into_tuple();
+        let number = Number::safe_sqrt(ctx, a)?;
+        Ok(Quantity::new(number, a_dim))
+    }
+
+    pub fn safe_cbrt(ctx: &Context, a: Quantity) -> Result<Quantity, Exception> {
+        let (a, a_dim) = a.into_tuple();
+        let number = Number::safe_cbrt(ctx, a)?;
+        Ok(Quantity::new(number, a_dim))
+    }
+
+    // MARK: Rounding Functions
+
+    pub fn safe_floor(ctx: &Context, a: Quantity) -> Result<Quantity, Exception> {
+        let (number, dim) = a.into_tuple();
+        let number = Number::safe_floor(ctx, number)?;
+        Ok(Quantity::new(number, dim))
+    }
+
+    pub fn safe_ceil(ctx: &Context, a: Quantity) -> Result<Quantity, Exception> {
+        let (number, dim) = a.into_tuple();
+        let number = Number::safe_ceil(ctx, number)?;
+        Ok(Quantity::new(number, dim))
+    }
+
+    pub fn safe_round(ctx: &Context, a: Quantity) -> Result<Quantity, Exception> {
+        let (number, dim) = a.into_tuple();
+        let number = Number::safe_round(ctx, number)?;
+        Ok(Quantity::new(number, dim))
+    }
+
+    // MARK: Trigonometric Functions
+
+    pub fn safe_sin(ctx: &Context, a: Quantity) -> Result<Quantity, Exception> {
+        let (a, _) = a.into_tuple();
+        let number = Number::safe_sin(ctx, a)?;
+        Ok(Quantity::new(number, Dim::none()))
+    }
+
+    pub fn safe_cos(ctx: &Context, a: Quantity) -> Result<Quantity, Exception> {
+        let (a, _) = a.into_tuple();
+        let number = Number::safe_cos(ctx, a)?;
+        Ok(Quantity::new(number, Dim::none()))
+    }
+
+    pub fn safe_tan(ctx: &Context, a: Quantity) -> Result<Quantity, Exception> {
+        let (a, _) = a.into_tuple();
+        let number = Number::safe_tan(ctx, a)?;
+        Ok(Quantity::new(number, Dim::none()))
+    }
+
+    pub fn safe_asin(ctx: &Context, a: Quantity) -> Result<Quantity, Exception> {
+        let (a, _a_dim) = a.into_tuple();
+        let number = Number::safe_asin(ctx, a)?;
+        Ok(Quantity::new(number, Dim::none()))
+    }
+
+    pub fn safe_acos(ctx: &Context, a: Quantity) -> Result<Quantity, Exception> {
+        let (a, _a_dim) = a.into_tuple();
+        let number = Number::safe_acos(ctx, a)?;
+        Ok(Quantity::new(number, Dim::none()))
+    }
+
+    pub fn safe_atan(ctx: &Context, a: Quantity) -> Result<Quantity, Exception> {
+        let (a, _a_dim) = a.into_tuple();
+        let number = Number::safe_atan(ctx, a)?;
+        Ok(Quantity::new(number, Dim::none()))
+    }
+
+    pub fn safe_atan2(ctx: &Context, a: Quantity, b: Quantity) -> Result<Quantity, Exception> {
+        let (a, a_dim) = a.into_tuple();
+        let (b, b_dim) = b.into_tuple();
+
+        Dim::unify(ctx, a_dim, b_dim)?;
+        let number = Number::safe_atan2(ctx, a, b)?;
+        Ok(Quantity::new(number, Dim::none()))
+    }
+
+    pub fn safe_sinh(ctx: &Context, a: Quantity) -> Result<Quantity, Exception> {
+        let (a, _) = a.into_tuple();
+        let number = Number::safe_sinh(ctx, a)?;
+        Ok(Quantity::new(number, Dim::none()))
+    }
+
+    pub fn safe_cosh(ctx: &Context, a: Quantity) -> Result<Quantity, Exception> {
+        let (a, _) = a.into_tuple();
+        let number = Number::safe_cosh(ctx, a)?;
+        Ok(Quantity::new(number, Dim::none()))
+    }
+
+    pub fn safe_tanh(ctx: &Context, a: Quantity) -> Result<Quantity, Exception> {
+        let (a, _) = a.into_tuple();
+        let number = Number::safe_tanh(ctx, a)?;
+        Ok(Quantity::new(number, Dim::none()))
+    }
+
+    pub fn safe_asinh(ctx: &Context, a: Quantity) -> Result<Quantity, Exception> {
+        let (a, _a_dim) = a.into_tuple();
+        let number = Number::safe_asinh(ctx, a)?;
+        Ok(Quantity::new(number, Dim::none()))
+    }
+
+    pub fn safe_acosh(ctx: &Context, a: Quantity) -> Result<Quantity, Exception> {
+        let (a, _a_dim) = a.into_tuple();
+        let number = Number::safe_acosh(ctx, a)?;
+        Ok(Quantity::new(number, Dim::none()))
+    }
+
+    pub fn safe_atanh(ctx: &Context, a: Quantity) -> Result<Quantity, Exception> {
+        let (a, _a_dim) = a.into_tuple();
+        let number = Number::safe_atanh(ctx, a)?;
+        Ok(Quantity::new(number, Dim::none()))
+    }
 }
 
 impl Neg for Quantity {
@@ -367,12 +496,41 @@ impl PrettyPrint<Context> for Quantity {
         ctx: &Context,
         level: usize,
     ) -> std::io::Result<()> {
-        if let Some((unit, scale)) = &self.dim.unit {
-            let value = Number::safe_div(ctx, self.number.clone(), scale.clone())
-                .unwrap_or_else(|_| Number::nan(ctx.config.float_precision));
-
-            value.pretty_print(out, ctx, level)?;
+        if let Some((unit, _conv)) = &self.dim.unit {
+            self.number.pretty_print(out, ctx, level)?;
             write!(out, " {UNIT}{}{RESET}", unit)
+        } else if !self.dim.is_none() {
+            self.number.pretty_print(out, ctx, level)?;
+            write!(out, " {LBRAC}{}{RBRAC}", self.dim.expr.to_string())
+        } else {
+            self.number.pretty_print(out, ctx, level)
+        }
+    }
+}
+
+impl EvalPrint<Context> for Quantity {
+    fn display_print<Output: std::io::Write>(
+        &self,
+        out: &mut Output,
+        ctx: &mut Context,
+        level: usize,
+    ) -> std::io::Result<()> {
+        if let Some((unit, conv)) = &self.dim.unit {
+            // With delayed conversion, value is already in display units - just print it
+            self.number.pretty_print(out, ctx, level)?;
+
+            // Get custom display name if available
+            let unit_str = if let Conversion::Impl(unit_impl) = conv {
+                unit_impl
+                    .display_name(ctx)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| unit.to_string())
+            } else {
+                unit.to_string()
+            };
+
+            write!(out, " {UNIT}{}{RESET}", unit_str)
         } else if !self.dim.is_none() {
             self.number.pretty_print(out, ctx, level)?;
             write!(out, " {LBRAC}{}{RBRAC}", self.dim.expr.to_string())

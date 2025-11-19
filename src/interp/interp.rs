@@ -2,7 +2,8 @@ use super::{InterpError, InterpResult, NameError, TypeError, Value};
 
 use crate::ast::*;
 use crate::diag::IntoError;
-use crate::interp::VRef;
+use crate::id::VarId;
+use crate::interp::{Exception, VRef};
 use crate::print::{PrettyPrint, PrettyString};
 use crate::runtime::{
     self as rt, CastInto, Constant, Context, ContextProvider, Function, LRValue, LocalScope,
@@ -53,6 +54,8 @@ macro_rules! no_trace {
     };
 }
 
+// MARK: Interpreter
+
 pub struct Interpreter<'ctx> {
     pub ctx: &'ctx mut Context,
 
@@ -70,6 +73,7 @@ impl<'ctx> Interpreter<'ctx> {
         }
     }
 
+
     pub fn active_module(&mut self) -> &mut rt::Module {
         self.ctx.active_module_mut().unwrap()
     }
@@ -83,6 +87,118 @@ impl<'ctx> Interpreter<'ctx> {
 }
 
 impl<'ctx> Interpreter<'ctx> {
+    pub fn call_by_id(&mut self, func_id: VarId, values: Vec<Value>) -> InterpResult<Value> {
+        let f = self
+            .active_module()
+            .get_unnamed_function(func_id)
+            .ok_or_else(|| {
+                Exception::new(
+                    "RuntimeError",
+                    format!("undefined function with id {:?}", func_id),
+                )
+            })?
+            .clone();
+
+        use rt::FunctionKind;
+        self.trace_debug(&format!(
+            "call_function {}({} args)",
+            f.name.raw,
+            values.len()
+        ));
+
+        let is_variadic = f.params.last().map_or(false, |p| p.is_variadic());
+        let expected_fixed_args = if is_variadic {
+            f.params.len() - 1
+        } else {
+            f.params.len()
+        };
+
+        // Check argument count for non-variadic functions
+        if !is_variadic && values.len() != f.params.len() {
+            return Err(InterpError::TypeError(TypeError {
+                expected: Some(format!(
+                    "function {} expects {} argument(s)",
+                    f.name.raw,
+                    f.params.len()
+                )),
+                found: SourceSpan::default().into_spanned(format!("{} argument(s)", values.len())),
+                context: None,
+            }));
+        }
+
+        // Check minimum argument count for variadic functions
+        if is_variadic && values.len() < expected_fixed_args {
+            return Err(InterpError::TypeError(TypeError {
+                expected: Some(format!(
+                    "function {} expects at least {} argument(s)",
+                    f.name.raw, expected_fixed_args
+                )),
+                found: SourceSpan::default().into_spanned(format!("{} argument(s)", values.len())),
+                context: None,
+            }));
+        }
+
+        // Apply type coercion for fixed parameters
+        let mut coerced_values = Vec::new();
+        for (i, param) in f.params[..expected_fixed_args].iter().enumerate() {
+            let val = values[i].clone();
+            let ty = param.ty.clone().map_or(rt::Ty::Any, |ty| ty.raw);
+
+            // Type coercion (except for references which are already values)
+            if !ty.is_ref() && ty != rt::Ty::Unit {
+                coerced_values.push(rt::coerce::to_ty(self.ctx, val, ty));
+            } else {
+                coerced_values.push(val);
+            }
+        }
+
+        // Handle variadic arguments
+        if is_variadic {
+            let variadic_args: Vec<Value> = values[expected_fixed_args..].to_vec();
+
+            // For native functions, spread the variadic args directly
+            // For source functions, wrap them in a list
+            if matches!(&f.kind, rt::FunctionKind::Native(_)) {
+                coerced_values.extend(variadic_args);
+            } else {
+                coerced_values.push(Value::list(variadic_args));
+            }
+        }
+
+        // Create a dummy call site span since we don't have source information
+        let call_site = SourceSpan::default();
+
+        // Invoke the function
+        let result = match &f.kind {
+            FunctionKind::Native(builtin) => {
+                let frame = StackFrame::new(f.name, call_site);
+                let scope = LocalScope::new();
+                Context::with_fn_call(self, frame, scope, |intrp| {
+                    builtin(intrp.ctx, coerced_values).map_err(InterpError::from)
+                })
+            }
+            FunctionKind::Source(block) => {
+                let frame = StackFrame::new(f.name, call_site);
+                let scope = LocalScope::from(
+                    f.params
+                        .iter()
+                        .map(|p| p.name.raw)
+                        .zip(coerced_values.into_iter()),
+                );
+
+                Context::with_fn_call(self, frame, scope, |intrp| {
+                    Interp::<Value>::eval(block, intrp)
+                })
+            }
+        };
+
+        match result {
+            Ok(value) => Ok(value),
+            Err(InterpError::Return(value)) => Ok(value),
+            Err(err) => Err(err),
+        }
+    }
+
     fn invoke(
         &mut self,
         f: &Function,
@@ -118,6 +234,16 @@ impl<'ctx> Interpreter<'ctx> {
                 )
             })?;
 
+            // Check if splat is used for non-variadic parameter (error)
+            if let ExprKind::Splat(_) = &arg.kind {
+                return Err(TypeError::mismatch(
+                    "regular argument".to_string(),
+                    arg.span()
+                        .into_spanned("splat can only be used for variadic parameters".to_string()),
+                )
+                .into());
+            }
+
             let ty = param.ty.clone().map_or(rt::Ty::Any, |ty| ty.raw);
             if ty.is_ref() {
                 let vref = Interp::<ValueRef>::eval(arg, self)?;
@@ -134,11 +260,12 @@ impl<'ctx> Interpreter<'ctx> {
                             "unit".to_string(),
                             call_site.into_spanned(match &arg.kind {
                                 ExprKind::Number(_) => "number".to_string(),
-                                ExprKind::String(_) => "string".to_string(), 
+                                ExprKind::String(_) => "string".to_string(),
                                 ExprKind::Boolean(_) => "boolean".to_string(),
-                                _ => "expression".to_string()
-                            })
-                        ).into());
+                                _ => "expression".to_string(),
+                            }),
+                        )
+                        .into());
                     }
                 };
                 values.push(Value::Unit(unit_name));
@@ -153,22 +280,74 @@ impl<'ctx> Interpreter<'ctx> {
             // push the remaining arguments into the variadic parameter
             let mut variadic = vec![];
             for arg in args.iter().skip(check_min_args) {
-                variadic.push(arg.eval(self)?);
+                // Check if this is a splat expression
+                if let ExprKind::Splat(inner) = &arg.kind {
+                    // Evaluate the inner expression and expand it
+                    let inner_val = inner.eval(self)?;
+                    match inner_val {
+                        Value::List(list) => {
+                            // Expand the list into individual arguments
+                            for item in list.borrow().iter() {
+                                variadic.push(item.clone());
+                            }
+                        }
+                        Value::Tuple(tuple) => {
+                            // Expand the tuple into individual arguments
+                            for item in tuple.iter() {
+                                variadic.push((*item.clone()).clone());
+                            }
+                        }
+                        _ => {
+                            return Err(TypeError::mismatch(
+                                "list or tuple".to_string(),
+                                arg.span().into_spanned(
+                                    "splat can only be applied to lists or tuples".to_string(),
+                                ),
+                            )
+                            .into());
+                        }
+                    }
+                } else {
+                    variadic.push(arg.eval(self)?);
+                }
             }
 
-            values.push(Value::list(variadic));
-        } else if args.len() > f.params.len() {
-            return Err(TypeError::mismatch(
-                format!(
-                    "function {} expects {} argument(s)",
-                    f.name.raw,
-                    f.params.len(),
-                ),
-                args[values.len()]
-                    .span()
-                    .into_spanned(format!("unexpected")),
-            )
-            .into());
+            // For native functions, we need to pass the variadic args directly as a Vec
+            // For source functions, we need to wrap them in a list
+            if matches!(&f.kind, rt::FunctionKind::Native(_)) {
+                // Native functions expect the variadic args to be spread into the values vector
+                values.extend(variadic);
+            } else {
+                // Source functions expect a single list value containing all variadic args
+                values.push(Value::list(variadic));
+            }
+        } else {
+            // Check if any argument uses splat in non-variadic function
+            for arg in args.iter() {
+                if let ExprKind::Splat(_) = &arg.kind {
+                    return Err(TypeError::mismatch(
+                        "regular argument".to_string(),
+                        arg.span().into_spanned(
+                            "splat can only be used for variadic parameters".to_string(),
+                        ),
+                    )
+                    .into());
+                }
+            }
+
+            if args.len() > f.params.len() {
+                return Err(TypeError::mismatch(
+                    format!(
+                        "function {} expects {} argument(s)",
+                        f.name.raw,
+                        f.params.len(),
+                    ),
+                    args[values.len()]
+                        .span()
+                        .into_spanned(format!("unexpected")),
+                )
+                .into());
+            }
         }
 
         // invoke the function
@@ -189,9 +368,13 @@ impl<'ctx> Interpreter<'ctx> {
                     Interp::<Value>::eval(block, intrp)
                 })
             }
-        }?;
+        };
 
-        Ok(result)
+        match result {
+            Ok(value) => Ok(value),
+            Err(InterpError::Return(value)) => Ok(value),
+            Err(err) => Err(err),
+        }
     }
 }
 
@@ -237,16 +420,24 @@ impl<'ctx> Interp<'ctx, Value> for ListNode<Stmt> {
         trace! {self, intrp, "Interp::<Value>::ListNode<Stmt>", {
             for item in &self.items[..self.items.len() - 1] {
                 match &item.kind {
+                    StmtKind::Break => {
+                        return Err(InterpError::Break);
+                    }
+                    StmtKind::Continue => {
+                        return Err(InterpError::Continue);
+                    }
                     StmtKind::Expr(expr) => Interp::<Value>::eval(expr, intrp)?,
                     StmtKind::Return(expr) => {
-                        return Ok(expr.eval(intrp)?);
+                        return Err(InterpError::Return(expr.eval(intrp)?));
                     }
                 };
             }
 
             Ok(match &self.items.last().unwrap().kind {
+                StmtKind::Break => return Err(InterpError::Break),
+                StmtKind::Continue => return Err(InterpError::Continue),
                 StmtKind::Expr(expr) => expr.eval(intrp)?,
-                StmtKind::Return(expr) => expr.eval(intrp)?
+                StmtKind::Return(expr) => return Err(InterpError::Return(expr.eval(intrp)?)),
             })
         }}
     }
@@ -272,7 +463,7 @@ impl<'ctx> Interp<'ctx, Option<Value>> for Item {
             ItemKind::UnitDecl(decl) => decl.eval(intrp).map(|_| None),
             ItemKind::OpDecl(decl) => decl.eval(intrp).map(|_| None),
             ItemKind::ConstDecl(decl) => decl.eval(intrp).map(|_| None),
-            ItemKind::FnDecl(decl) => decl.eval(intrp).map(|_| None),
+            ItemKind::FnDecl(decl) => Interp::<()>::eval(decl, intrp).map(|_| None),
             ItemKind::Expr(expr) => Ok(Some(Interp::<Value>::eval(expr, intrp)?)),
         }
     }
@@ -319,28 +510,75 @@ impl<'ctx> Interp<'ctx, ()> for UnitDecl {
             let name = self.name.as_spanned_ustr();
             let suffixes = self.suffixes.iter().map(|s| s.as_spanned_ustr()).collect();
             let dim_expr = self.dimension.eval(intrp)?;
-            let scalar = match &self.scalar {
-                Some(scalar) => {
-                    let value = Interp::<Value>::eval(scalar, intrp)?;
-                    match CastInto::<rt::Number>::cast(intrp.ctx, value) {
-                        Ok(num) => num,
-                        Err(_) => {
-                            return Err(TypeError::mismatch(
-                                format!("expected scalar value in unit declaration"),
-                                scalar.span().into_spanned("given value".to_string()),
-                            )
-                            .into());
-                        }
+
+            let unit = match &self.value {
+                Some(value) => match value {
+                    Left(expr) => {
+                        let value = Interp::<Value>::eval(expr, intrp)?;
+                        let num = match CastInto::<rt::Number>::cast(intrp.ctx, value) {
+                            Ok(num) => num,
+                            Err(_) => {
+                                return Err(TypeError::mismatch(
+                                    format!("expected scalar value in unit declaration"),
+                                    expr.span().into_spanned("given value".to_string()),
+                                )
+                                .into());
+                            }
+                        };
+                        rt::Unit::new(kind, name, suffixes, dim_expr, num)
                     }
+                    Right(unit_impl) => {
+                        let impl_obj = Interp::<rt::UnitImpl>::eval(unit_impl, intrp)?;
+                        let conversion = rt::Conversion::Impl(impl_obj);
+                        rt::Unit::with_conversion(kind, name, suffixes, dim_expr, conversion)
+                    },
                 },
-                None => rt::Number::Int(1.into())
+                None => rt::Unit::new(kind, name, suffixes, dim_expr, rt::Number::Int(1.into()))
             };
 
-            let unit = rt::Unit::new(kind, name, suffixes, dim_expr, scalar);
-            intrp
-                .active_module()
-                .register_unit(unit)
-                .map_err(InterpError::from)
+            // Use update_unit instead of register_unit to replace placeholder units registered during parsing
+            intrp.active_module().update_unit(unit);
+            Ok(())
+        }}
+    }
+}
+
+impl<'ctx> Interp<'ctx, rt::UnitImpl> for UnitImpl {
+    fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<rt::UnitImpl> {
+        no_trace! {self, intrp, "Interp::<rt::UnitImpl>::UnitImpl", {
+            // Evaluate ALL functions to get Function objects
+            let all_funcs: Result<Vec<_>, _> = self.functions.iter()
+                .map(|decl| Interp::<Function>::eval(decl, intrp))
+                .collect();
+            let all_funcs = all_funcs?;
+
+            // Validate against UnitImpl interface from builtin module
+            let builtin_module = intrp.ctx.modules.get_module("builtin")
+                .expect("builtin module should exist");
+            if let Some(interface) = builtin_module.get_interface("UnitImpl").cloned() {
+                // Validate all implemented functions
+                // This will check that:
+                // 1. All required functions are present
+                // 2. All provided functions match expected signatures
+                // 3. No extra functions are defined that aren't part of the interface
+                interface.validate(intrp.ctx, all_funcs.iter().collect())?;
+            }
+
+            // Extract the specific functions we need
+            let to_base_func = all_funcs.iter().find(|f| f.name.raw == "to_base").unwrap().clone();
+            let from_base_func = all_funcs.iter().find(|f| f.name.raw == "from_base").unwrap().clone();
+            let display_name_func = all_funcs.iter().find(|f| f.name.raw == "display_name").cloned();
+
+            // Get module ID for storing with the UnitImpl
+            let module_id = intrp.active_module().id;
+
+            // Register as unnamed functions and get their IDs
+            let to_base_id = intrp.active_module().register_unnamed_function(to_base_func);
+            let from_base_id = intrp.active_module().register_unnamed_function(from_base_func);
+            let display_name_id = display_name_func.map(|f| intrp.active_module().register_unnamed_function(f));
+
+            // Create and return the runtime UnitImpl
+            Ok(rt::UnitImpl::new(module_id, to_base_id, from_base_id, display_name_id))
         }}
     }
 }
@@ -403,9 +641,9 @@ impl<'ctx> Interp<'ctx, ()> for ConstDecl {
     }
 }
 
-impl<'ctx> Interp<'ctx, ()> for FnDecl {
-    fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<()> {
-        no_trace! {self, intrp, "Interp::<()>::FnDecl", {
+impl<'ctx> Interp<'ctx, Function> for FnDecl {
+    fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<Function> {
+        no_trace! {self, intrp, "Interp::<Function>::FnDecl", {
             // validate the parameters
             for (i, param) in self.params.iter().enumerate() {
                 if param.is_variadic && i != self.params.len() - 1 {
@@ -422,12 +660,18 @@ impl<'ctx> Interp<'ctx, ()> for FnDecl {
             let params = self.params.eval(intrp)?;
             let kind = rt::FunctionKind::Source(self.body.clone());
 
-            let func = Function::new(name, params, kind);
-            intrp
-                .active_module()
-                .register_function(func)
-                .map_err(InterpError::from)
+            Ok(Function::new(name, params, kind))
         }}
+    }
+}
+
+impl<'ctx> Interp<'ctx, ()> for FnDecl {
+    fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<()> {
+        let func = Interp::<Function>::eval(self, intrp)?;
+        intrp
+            .active_module()
+            .register_function(func)
+            .map_err(InterpError::from)
     }
 }
 
@@ -441,7 +685,21 @@ impl<'ctx> Interp<'ctx, rt::Param> for Param {
 
             let ty = match &self.anno {
                 Some(Left(dim_node)) => {
-                    let ty = rt::Ty::Dim(rt::Dim::from(dim_node.eval(intrp)?));
+                    // Check if this is a simple identifier that might be a unit constraint (e.g., [rad])
+                    let ty = if let DimExprKind::Ident(ident) = &dim_node.kind {
+                            // Try to resolve as a unit suffix first
+                        let module = intrp.ctx.active_module_mut().unwrap();
+                        if let Ok(unit) = module.resolve_unit_suffix(ident.as_spanned_ustr()) {
+                            // This is a unit constraint - create a Dim with unit info
+                            rt::Ty::Dim(rt::Dim::new(unit.dim_expr.clone(), Some((ident.raw, unit.conversion.clone()))))
+                        } else {
+                            // Not a unit, treat as a regular dimension expression
+                            rt::Ty::Dim(rt::Dim::from(dim_node.eval(intrp)?))
+                        }
+                    } else {
+                        // Complex dimension expression
+                        rt::Ty::Dim(rt::Dim::from(dim_node.eval(intrp)?))
+                    };
                     Some(dim_node.span().into_spanned(ty))
                 },
                 Some(Right(ty_node)) => {
@@ -494,6 +752,15 @@ impl<'ctx> Interp<'ctx, rt::DimExpr> for DimExpr {
                 let number = num.eval(intrp)?;
                 DimExpr::Number(number)
             }
+            DimExprKind::Unit(suffix) => {
+                // For unit constraints like [rad], we look up the unit and return its dimension
+                let module = intrp.ctx.active_module_mut().unwrap();
+                let unit = module
+                    .resolve_unit_suffix(suffix.as_spanned_ustr())
+                    .map_err(InterpError::from)?;
+
+                unit.dim_expr.clone()
+            }
         })
     }
 }
@@ -538,14 +805,12 @@ impl<'ctx> Interp<'ctx, LRValue> for Expr {
                     Ok(LRValue::R(intrp.invoke(&func, args, op.span())?))
                 }
                 ExprKind::UnitCast(expr, unit) => {
-                    println!("unit cast: {} to {}", expr.pretty_string(&()), unit.pretty_string(&()));
                     let value = Interp::<Value>::eval(expr, intrp)?;
 
                     use rt::Number;
                     match value {
                         Value::Quantity(q) => {
-                            let (name, scale, expr) = {
-                                println!("resolving unit: {}", unit.pretty_string(&()));
+                            let (name, conv, expr) = {
                                 let unit = intrp
                                     .ctx
                                     .active_module_mut()
@@ -553,14 +818,14 @@ impl<'ctx> Interp<'ctx, LRValue> for Expr {
                                     .resolve_unit_suffix(unit.span().into_spanned(unit.name))
                                     .map_err(InterpError::from)?;
 
-                                (unit.name.raw, unit.scale.clone(), unit.dim_expr.clone())
+                                (unit.name.raw, unit.conversion.clone(), unit.dim_expr.clone())
                             };
 
-                            println!("casting quantity to unit: {}", name);
-                            let number = Number::safe_mul(intrp.ctx, q.number.clone(), scale.clone())?;
-                            let dim = (expr, name, scale).into();
+                            // Delayed conversion: keep value in display units, not base units
+                            // Only convert to base when mixing units or explicitly requested
+                            let number = q.number.clone();
+                            let dim = (expr, name, conv).into();
                             let quantity: rt::Quantity = (number, dim).into();
-                            println!("result: {}", quantity.pretty_string(intrp.ctx));
                             Ok(LRValue::R(Value::Quantity(quantity)))
                         }
                         _ => Err(TypeError::mismatch(
@@ -583,7 +848,12 @@ impl<'ctx> Interp<'ctx, LRValue> for Expr {
                     let iter = Interp::<ValueRef>::eval(iter, intrp)?.try_into_list(intrp.ctx)?;
                     for value in iter.borrow().iter().cloned() {
                         let scope = LocalScope::from(pat.bind_with(intrp.ctx, value)?.into_iter());
-                        Context::with_scope(intrp, scope, |intrp| Interp::<Value>::eval(body, intrp))?;
+                        match Context::with_scope(intrp, scope, |intrp| Interp::<Value>::eval(body, intrp)) {
+                            Ok(_) => {}, // Normal iteration
+                            Err(InterpError::Continue) => continue, // Skip to next iteration
+                            Err(InterpError::Break) => break, // Exit loop
+                            Err(e) => return Err(e), // Propagate other errors
+                        }
                     }
                     Ok(LRValue::R(Value::Empty))
                 }
@@ -610,12 +880,10 @@ impl<'ctx> Interp<'ctx, LRValue> for Expr {
                 }
                 ExprKind::Path(path) => {
                     let res = Interp::<ValueRef>::eval(path, intrp)?;
-                    println!("res: {:?}", res);
                     Ok(LRValue::L(res))
                 }
                 ExprKind::Ident(ident) => {
                     let res = Interp::<ValueRef>::eval(ident, intrp)?;
-                    println!("res: {:?}", res);
                     Ok(LRValue::L(res))
                 }
                 ExprKind::Number(num) => Ok(LRValue::R(
@@ -635,6 +903,12 @@ impl<'ctx> Interp<'ctx, LRValue> for Expr {
                     let ty = ty.eval(intrp)?;
                     Ok(LRValue::R(Value::Ty(ty)))
                 }
+                ExprKind::Splat(_) => {
+                    Err(TypeError::mismatch(
+                        "splat expressions can only be used as arguments to variadic functions".to_string(),
+                        self.span().into_spanned("invalid splat usage".to_string()),
+                    ).into())
+                }
             }
         }}
     }
@@ -653,11 +927,7 @@ impl<'ctx> Interp<'ctx, ValueRef> for Expr {
     fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<ValueRef> {
         match Interp::<LRValue>::eval(self, intrp)? {
             LRValue::L(vref) => Ok(vref),
-            LRValue::R(value) => Err(TypeError::mismatch(
-                format!("expected reference"),
-                self.span().into_spanned(value.pretty_string(intrp.ctx)),
-            )
-            .into()),
+            LRValue::R(value) => Ok(ValueRef::new(value)),
         }
     }
 }

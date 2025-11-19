@@ -137,7 +137,7 @@ impl<'a> SourceRef<'a> {
         let (start_ln, start_col) = self.file.decode_offset(self.start);
         let (end_ln, end_col) = self.file.decode_offset(self.end);
         if start_ln == end_ln {
-            end_col - start_col
+            end_col.saturating_sub(start_col)
         } else {
             end_col
         }
