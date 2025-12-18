@@ -14,11 +14,16 @@ pub use super::value::DimExpr;
 pub struct Dimension {
     pub name: Spanned<Ustr>,
     pub expr: DimExpr,
+    pub label: Option<Spanned<Ustr>>,
 }
 
 impl Dimension {
     pub fn new(name: Spanned<Ustr>, expr: DimExpr) -> Self {
-        Self { name, expr }
+        Self { name, expr, label: None }
+    }
+
+    pub fn with_label(name: Spanned<Ustr>, expr: DimExpr, label: Spanned<Ustr>) -> Self {
+        Self { name, expr, label: Some(label) }
     }
 }
 
@@ -27,6 +32,7 @@ impl Dimension {
 pub struct DimensionTable {
     dimensions: HashMap<Ustr, Dimension>,
     dim_exprs: HashMap<String, Ustr>,
+    labels: HashMap<Ustr, Ustr>, // label -> dimension name
 }
 
 impl DimensionTable {
@@ -34,11 +40,18 @@ impl DimensionTable {
         Self {
             dimensions: HashMap::new(),
             dim_exprs: HashMap::new(),
+            labels: HashMap::new(),
         }
     }
 
     pub fn insert(&mut self, dim: Dimension) {
         self.dim_exprs.insert(dim.expr.to_string(), dim.name.raw);
+
+        // Index by label if present
+        if let Some(ref label) = dim.label {
+            self.labels.insert(label.raw, dim.name.raw);
+        }
+
         self.dimensions.insert(dim.name.raw, dim);
     }
 
@@ -50,6 +63,13 @@ impl DimensionTable {
         self.dim_exprs
             .get(&expr.to_string())
             .and_then(|name| self.get(*name))
+    }
+
+    /// Get the label for a dimension expression, if available
+    pub fn get_label(&self, expr: &DimExpr) -> Option<&str> {
+        self.resolve_expr(expr)
+            .and_then(|dim| dim.label.as_ref())
+            .map(|label| label.raw.as_str())
     }
 }
 

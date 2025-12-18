@@ -70,9 +70,10 @@ impl Unit {
     }
 
     pub fn as_dim(&self) -> Dim {
-        Dim::new(
+        Dim::simple(
             self.dim_expr.clone(),
-            Some((self.name.raw, self.conversion.clone())),
+            self.name.raw,
+            self.conversion.clone(),
         )
     }
 

@@ -11,21 +11,213 @@ use ustr::Ustr;
 #[dynamic]
 pub static NONE_DIM: Dim = Dim::new(DimExpr::one(), None);
 
+// MARK: UnitInfo
+
+/// Unit information that can be simple or compound
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UnitInfo {
+    /// A simple unit with a name and conversion
+    Simple(Ustr, Conversion),
+    /// A compound unit: lhs * rhs
+    Mul(Box<UnitInfo>, Box<UnitInfo>),
+    /// A compound unit: lhs / rhs
+    Div(Box<UnitInfo>, Box<UnitInfo>),
+    /// A compound unit: base ^ exponent
+    Pow(Box<UnitInfo>, i32),
+}
+
+impl UnitInfo {
+    /// Get the unit name for simple units, or None for compound units
+    pub fn simple_unit_name(&self) -> Option<Ustr> {
+        match self {
+            UnitInfo::Simple(name, _) => Some(*name),
+            _ => None,
+        }
+    }
+
+    /// Get the conversion for simple units
+    pub fn simple_conversion(&self) -> Option<&Conversion> {
+        match self {
+            UnitInfo::Simple(_, conv) => Some(conv),
+            _ => None,
+        }
+    }
+
+    /// Simplify compound units by combining repeated units into powers
+    pub fn simplify(self) -> Self {
+        use std::collections::HashMap;
+
+        // Helper to collect units with their exponents
+        // Maps unit name -> (count, conversion)
+        fn collect_units(
+            unit: &UnitInfo,
+            numerator: &mut HashMap<Ustr, (i32, Conversion)>,
+            denominator: &mut HashMap<Ustr, (i32, Conversion)>,
+            in_denominator: bool,
+        ) {
+            match unit {
+                UnitInfo::Simple(name, conv) => {
+                    if name.is_empty() {
+                        return; // Skip empty placeholder units
+                    }
+                    if in_denominator {
+                        let entry = denominator.entry(*name).or_insert((0, conv.clone()));
+                        entry.0 += 1;
+                    } else {
+                        let entry = numerator.entry(*name).or_insert((0, conv.clone()));
+                        entry.0 += 1;
+                    }
+                }
+                UnitInfo::Mul(a, b) => {
+                    collect_units(a, numerator, denominator, in_denominator);
+                    collect_units(b, numerator, denominator, in_denominator);
+                }
+                UnitInfo::Div(a, b) => {
+                    collect_units(a, numerator, denominator, in_denominator);
+                    collect_units(b, numerator, denominator, !in_denominator);
+                }
+                UnitInfo::Pow(base, exp) => {
+                    // Flatten powers
+                    if let UnitInfo::Simple(name, conv) = base.as_ref() {
+                        if name.is_empty() {
+                            return;
+                        }
+                        if in_denominator {
+                            let entry = denominator.entry(*name).or_insert((0, conv.clone()));
+                            entry.0 += exp;
+                        } else {
+                            let entry = numerator.entry(*name).or_insert((0, conv.clone()));
+                            entry.0 += exp;
+                        }
+                    } else {
+                        // Complex nested power - just collect recursively
+                        for _ in 0..*exp {
+                            collect_units(base, numerator, denominator, in_denominator);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Collect all units
+        let mut numerator = HashMap::new();
+        let mut denominator = HashMap::new();
+        collect_units(&self, &mut numerator, &mut denominator, false);
+
+        // Compute net exponents (numerator - denominator)
+        let mut net_exponents = HashMap::new();
+        for (name, (count, conv)) in numerator {
+            let denom_count = denominator.get(&name).map(|(c, _)| *c).unwrap_or(0);
+            let net = count - denom_count;
+            if net != 0 {
+                net_exponents.insert(name, (net, conv));
+            }
+        }
+        for (name, (count, conv)) in denominator {
+            if !net_exponents.contains_key(&name) && count != 0 {
+                net_exponents.insert(name, (-count, conv));
+            }
+        }
+
+        // Build simplified unit
+        let mut positive_units = Vec::new();
+        let mut negative_units = Vec::new();
+
+        for (name, (exp, conv)) in net_exponents {
+            let unit = UnitInfo::Simple(name, conv);
+            if exp > 0 {
+                positive_units.push((unit, exp));
+            } else if exp < 0 {
+                negative_units.push((unit, -exp));
+            }
+        }
+
+        // Sort for consistent output
+        positive_units.sort_by(|a, b| a.0.simple_unit_name().cmp(&b.0.simple_unit_name()));
+        negative_units.sort_by(|a, b| a.0.simple_unit_name().cmp(&b.0.simple_unit_name()));
+
+        // Build the result
+        let numerator_unit = Self::build_product(positive_units);
+        let denominator_unit = Self::build_product(negative_units);
+
+        match (numerator_unit, denominator_unit) {
+            (Some(num), Some(denom)) => UnitInfo::Div(Box::new(num), Box::new(denom)),
+            (Some(num), None) => num,
+            (None, Some(denom)) => UnitInfo::Div(
+                Box::new(UnitInfo::Simple(Ustr::from(""), Conversion::Scale(Number::Int(1.into())))),
+                Box::new(denom)
+            ),
+            (None, None) => UnitInfo::Simple(Ustr::from(""), Conversion::Scale(Number::Int(1.into()))),
+        }
+    }
+
+    /// Build a product of units with exponents
+    fn build_product(units: Vec<(UnitInfo, i32)>) -> Option<UnitInfo> {
+        if units.is_empty() {
+            return None;
+        }
+
+        let mut result = None;
+        for (unit, exp) in units {
+            let powered = if exp == 1 {
+                unit
+            } else {
+                UnitInfo::Pow(Box::new(unit), exp)
+            };
+
+            result = Some(match result {
+                None => powered,
+                Some(acc) => UnitInfo::Mul(Box::new(acc), Box::new(powered)),
+            });
+        }
+        result
+    }
+}
+
+impl ToString for UnitInfo {
+    fn to_string(&self) -> String {
+        match self {
+            UnitInfo::Simple(name, _) => name.to_string(),
+            UnitInfo::Mul(a, b) => {
+                // Space-separated for multiplication
+                format!("{} {}", a.to_string(), b.to_string())
+            }
+            UnitInfo::Div(a, b) => {
+                match (a.as_ref(), b.as_ref()) {
+                    (UnitInfo::Simple(name, _), _) if name.is_empty() => {
+                        // Handle 1 / unit case
+                        format!("1 / {}", b.to_string())
+                    }
+                    _ => format!("{} / {}", a.to_string(), b.to_string())
+                }
+            }
+            UnitInfo::Pow(base, exp) => {
+                // Use superscript notation for exponents
+                format!("{}^{}", base.to_string(), exp)
+            }
+        }
+    }
+}
+
 // MARK: Dim
 
 /// A dimension contains a dimensional expression and optional unit information.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Dim {
     pub expr: DimExpr,
-    pub unit: Option<(Ustr, Conversion)>,
+    pub unit: Option<UnitInfo>,
 }
 
 impl Dim {
-    pub fn new(expr: DimExpr, unit: Option<(Ustr, Conversion)>) -> Self {
+    pub fn new(expr: DimExpr, unit: Option<UnitInfo>) -> Self {
         Self {
             expr: expr.normalize(),
             unit,
         }
+    }
+
+    pub fn simple(expr: DimExpr, unit: Ustr, conversion: Conversion) -> Self {
+        Self::new(expr, Some(UnitInfo::Simple(unit, conversion)))
     }
 
     pub fn none() -> Self {
@@ -38,6 +230,53 @@ impl Dim {
 
     pub fn is_none(&self) -> bool {
         self.expr == DimExpr::one() && self.unit.is_none()
+    }
+
+    /// Multiply two dimensions, creating a compound dimension
+    pub fn mul(a: Dim, b: Dim) -> Self {
+        // If both are dimensionless, result is dimensionless
+        if a.is_none() && b.is_none() {
+            return Dim::none();
+        }
+
+        let expr = DimExpr::Mul(P::new(a.expr), P::new(b.expr));
+        let unit = match (a.unit, b.unit) {
+            (Some(a_unit), Some(b_unit)) => {
+                // Create compound and simplify
+                let compound = UnitInfo::Mul(Box::new(a_unit), Box::new(b_unit));
+                Some(compound.simplify())
+            }
+            (Some(u), None) | (None, Some(u)) => Some(u),
+            (None, None) => None,
+        };
+        Self::new(expr, unit)
+    }
+
+    /// Divide two dimensions, creating a compound dimension
+    pub fn div(a: Dim, b: Dim) -> Self {
+        // If both are dimensionless, result is dimensionless
+        if a.is_none() && b.is_none() {
+            return Dim::none();
+        }
+
+        let expr = DimExpr::Div(P::new(a.expr), P::new(b.expr));
+        let unit = match (a.unit, b.unit) {
+            (Some(a_unit), Some(b_unit)) => {
+                // Create compound and simplify
+                let compound = UnitInfo::Div(Box::new(a_unit), Box::new(b_unit));
+                Some(compound.simplify())
+            }
+            (Some(u), None) => Some(u),
+            (None, Some(u)) => {
+                let compound = UnitInfo::Div(
+                    Box::new(UnitInfo::Simple(Ustr::from(""), Conversion::Scale(Number::Int(1.into())))),
+                    Box::new(u)
+                );
+                Some(compound.simplify())
+            }
+            (None, None) => None,
+        };
+        Self::new(expr, unit)
     }
 }
 
@@ -81,7 +320,7 @@ impl Dim {
 impl ToString for Dim {
     fn to_string(&self) -> String {
         match &self.unit {
-            Some(unit) => format!("{}", unit.0),
+            Some(unit) => unit.to_string(),
             None => format!("[{}]", self.expr.to_string()),
         }
     }
@@ -95,13 +334,13 @@ impl From<DimExpr> for Dim {
 
 impl From<(DimExpr, Ustr, Number)> for Dim {
     fn from((expr, unit, scale): (DimExpr, Ustr, Number)) -> Self {
-        Self::new(expr, Some((unit, Conversion::Scale(scale))))
+        Self::new(expr, Some(UnitInfo::Simple(unit, Conversion::Scale(scale))))
     }
 }
 
 impl From<(DimExpr, Ustr, Conversion)> for Dim {
     fn from((expr, unit, conv): (DimExpr, Ustr, Conversion)) -> Self {
-        Self::new(expr, Some((unit, conv)))
+        Self::new(expr, Some(UnitInfo::Simple(unit, conv)))
     }
 }
 
@@ -113,7 +352,7 @@ impl PrettyPrint<Context> for Dim {
         level: usize,
     ) -> std::io::Result<()> {
         match &self.unit {
-            Some(unit) => write!(out, "{}", unit.0),
+            Some(unit) => write!(out, "{}", unit.to_string()),
             None => self.expr.pretty_print(out, ctx, level),
         }
     }

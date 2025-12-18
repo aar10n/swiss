@@ -74,8 +74,8 @@ impl Quantity {
         self.number.is_truthy()
     }
 
-    pub fn get_unit(&self) -> Option<&Ustr> {
-        self.dim.unit.as_ref().map(|(unit, _)| unit)
+    pub fn get_unit(&self) -> Option<Ustr> {
+        self.dim.unit.as_ref().and_then(|u| u.simple_unit_name())
     }
 
     pub fn ty(&self) -> Ty {
@@ -134,7 +134,9 @@ impl Quantity {
         let (a, a_dim) = a.into_tuple();
         let (b, b_dim) = b.into_tuple();
 
-        let dim = Dim::unify(ctx, a_dim, b_dim)?;
+        // Compute the resulting dimension with compound units
+        let dim = Dim::mul(a_dim, b_dim);
+
         let number = Number::safe_mul(ctx, a, b)?;
         Ok(Quantity::new(number, dim))
     }
@@ -143,7 +145,9 @@ impl Quantity {
         let (a, a_dim) = a.into_tuple();
         let (b, b_dim) = b.into_tuple();
 
-        let dim = Dim::unify(ctx, a_dim, b_dim)?;
+        // Compute the resulting dimension with compound units
+        let dim = Dim::div(a_dim, b_dim);
+
         let number = Number::safe_div(ctx, a, b)?;
         Ok(Quantity::new(number, dim))
     }
@@ -496,9 +500,9 @@ impl PrettyPrint<Context> for Quantity {
         ctx: &Context,
         level: usize,
     ) -> std::io::Result<()> {
-        if let Some((unit, _conv)) = &self.dim.unit {
+        if let Some(unit_info) = &self.dim.unit {
             self.number.pretty_print(out, ctx, level)?;
-            write!(out, " {UNIT}{}{RESET}", unit)
+            write!(out, " {UNIT}{}{RESET}", unit_info.to_string())
         } else if !self.dim.is_none() {
             self.number.pretty_print(out, ctx, level)?;
             write!(out, " {LBRAC}{}{RBRAC}", self.dim.expr.to_string())
@@ -515,19 +519,19 @@ impl EvalPrint<Context> for Quantity {
         ctx: &mut Context,
         level: usize,
     ) -> std::io::Result<()> {
-        if let Some((unit, conv)) = &self.dim.unit {
-            // With delayed conversion, value is already in display units - just print it
+        if let Some(unit_info) = &self.dim.unit {
             self.number.pretty_print(out, ctx, level)?;
 
-            // Get custom display name if available
-            let unit_str = if let Conversion::Impl(unit_impl) = conv {
-                unit_impl
-                    .display_name(ctx)
-                    .ok()
-                    .flatten()
-                    .unwrap_or_else(|| unit.to_string())
-            } else {
-                unit.to_string()
+            // Get custom display name if available (only for simple units)
+            let unit_str = match unit_info {
+                super::UnitInfo::Simple(name, Conversion::Impl(unit_impl)) => {
+                    unit_impl
+                        .display_name(ctx)
+                        .ok()
+                        .flatten()
+                        .unwrap_or_else(|| name.to_string())
+                }
+                _ => unit_info.to_string(),
             };
 
             write!(out, " {UNIT}{}{RESET}", unit_str)
