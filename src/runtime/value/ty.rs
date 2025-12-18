@@ -21,8 +21,11 @@ pub enum Ty {
     Int,
     Str,
     Num,
+    Function,
+    Io,
     Dim(Dim),
     List,
+    Object,
     Tuple(SmallVec<[Box<Ty>; 3]>),
     Unit,
     Type,
@@ -73,6 +76,8 @@ impl Ty {
                 Ok(Ty::Tuple(result))
             }
             (Ty::Ref(a), Ty::Ref(b)) => Ty::unify(ctx, a, b).map(Box::new).map(Ty::Ref),
+            (Ty::Function, Ty::Function) => Ok(Ty::Function),
+            (Ty::Io, Ty::Io) => Ok(Ty::Io),
             (a, b) if a == b => Ok(a.clone()),
             _ => Err(Exception::new(
                 "TypeError",
@@ -96,9 +101,12 @@ impl ToString for Ty {
             Ty::Float => "float".to_owned(),
             Ty::Int => "int".to_owned(),
             Ty::Str => "str".to_owned(),
+            Ty::Function => "fn".to_owned(),
+            Ty::Io => "io".to_owned(),
             Ty::Num => "num".to_owned(),
             Ty::Dim(dim) => dim.to_string(),
             Ty::List => "list".to_owned(),
+            Ty::Object => "object".to_owned(),
             Ty::Tuple(ty) => {
                 let mut result = String::new();
                 result.push_str("(");
@@ -132,9 +140,12 @@ impl PrettyPrint<Context> for Ty {
             Ty::Float => write!(out, "{ATTR}float{RESET}"),
             Ty::Int => write!(out, "{ATTR}int{RESET}"),
             Ty::Str => write!(out, "{ATTR}str{RESET}"),
+            Ty::Function => write!(out, "{ATTR}fn{RESET}"),
+            Ty::Io => write!(out, "{ATTR}io{RESET}"),
             Ty::Num => write!(out, "{ATTR}num{RESET}"),
             Ty::Dim(dim) => write!(out, "{LBRAC}{}{RBRAC}", dim.pretty_string(ctx)),
             Ty::List => write!(out, "{ATTR}list{RESET}"),
+            Ty::Object => write!(out, "{ATTR}object{RESET}"),
             Ty::Tuple(ty) => {
                 write!(out, "{LBRAC}", LBRAC = LBRAC)?;
                 for (i, ty) in ty.iter().enumerate() {
@@ -287,6 +298,34 @@ impl CastInto<String> for Value {
     }
 }
 
+impl CastInto<super::super::Function> for Value {
+    fn cast(ctx: &Context, value: Value) -> Result<super::super::Function, Exception> {
+        match value {
+            Value::Ref(r) => CastInto::<super::super::Function>::cast(ctx, r.borrow().clone()),
+            Value::Function(f) => Ok(f),
+            v => Err(Exception::new(
+                "TypeError",
+                format!("expected function, found {}", v.ty().pretty_string(ctx)),
+            )
+            .with_backtrace(ctx.backtrace())),
+        }
+    }
+}
+
+impl CastInto<super::super::IoHandle> for Value {
+    fn cast(ctx: &Context, value: Value) -> Result<super::super::IoHandle, Exception> {
+        match value {
+            Value::Ref(r) => CastInto::<super::super::IoHandle>::cast(ctx, r.borrow().clone()),
+            Value::Io(io) => Ok(io),
+            v => Err(Exception::new(
+                "TypeError",
+                format!("expected io handle, found {}", v.ty().pretty_string(ctx)),
+            )
+            .with_backtrace(ctx.backtrace())),
+        }
+    }
+}
+
 impl CastInto<Ustr> for Value {
     fn cast(ctx: &Context, value: Value) -> Result<Ustr, Exception> {
         match value {
@@ -373,6 +412,7 @@ impl TryCoerce<Quantity> for Value {
             Value::Unit(u) => Value::Unit(u),
             Value::Ty(t) => Value::Ty(t),
             Value::Empty => Value::Empty,
+            _ => value,
         }
     }
 }
@@ -453,44 +493,60 @@ pub mod coerce {
             Ty::Num => TryCoerce::<Quantity>::coerce(ctx, v),
             Ty::Dim(d) => {
                 // If this dimension has a target unit (e.g., [rad]), perform automatic conversion
-                if let Some((target_suffix, target_conv)) = &d.unit {
-                    match v {
-                        Value::Quantity(q) => {
-                            // Check dimension compatibility (but don't fail here, type checking will catch mismatches)
-                            if q.dim.expr != d.expr {
-                                // Dimension mismatch - return as-is
-                                return Value::Quantity(q);
-                            }
-
-                            // Step 1: Convert to base units if needed
-                            let base_value = if let Some((source_unit, source_conv)) = &q.dim.unit {
-                                if source_unit == target_suffix {
-                                    // Same unit, no conversion needed
-                                    q.number.clone()
-                                } else {
-                                    // Convert to base units first
-                                    source_conv.to_base(ctx, q.number.clone()).unwrap_or(q.number.clone())
+                if let Some(target_unit_info) = &d.unit {
+                    // Only handle simple unit conversions here
+                    if let (Some(target_suffix), Some(target_conv)) =
+                        (target_unit_info.simple_unit_name(), target_unit_info.simple_conversion()) {
+                        match v {
+                            Value::Quantity(q) => {
+                                // Check dimension compatibility (but don't fail here, type checking will catch mismatches)
+                                if q.dim.expr != d.expr {
+                                    // Dimension mismatch - return as-is
+                                    return Value::Quantity(q);
                                 }
-                            } else {
-                                // No source unit (dimensionless or base unit)
-                                q.number.clone()
-                            };
 
-                            // Step 2: Convert from base units to target unit
-                            let target_value = target_conv.from_base(ctx, base_value.clone()).unwrap_or(base_value);
+                                // Step 1: Convert to base units if needed
+                                let base_value = if let Some(source_unit_info) = &q.dim.unit {
+                                    if let (Some(source_unit), Some(source_conv)) =
+                                        (source_unit_info.simple_unit_name(), source_unit_info.simple_conversion()) {
+                                        if source_unit == target_suffix {
+                                            // Same unit, no conversion needed
+                                            q.number.clone()
+                                        } else {
+                                            // Convert to base units first
+                                            source_conv.to_base(ctx, q.number.clone()).unwrap_or(q.number.clone())
+                                        }
+                                    } else {
+                                        // Compound unit - cannot auto-convert
+                                        return Value::Quantity(q);
+                                    }
+                                } else {
+                                    // No source unit (dimensionless or base unit)
+                                    q.number.clone()
+                                };
 
-                            // Create new Dim with the target unit
-                            let result_dim = Dim::new(d.expr.clone(), Some((*target_suffix, target_conv.clone())));
-                            Value::Quantity(Quantity::new(target_value, result_dim))
+                                // Step 2: Convert from base units to target unit
+                                let target_value = target_conv.from_base(ctx, base_value.clone()).unwrap_or(base_value);
+
+                                // Create new Dim with the target unit
+                                let result_dim = Dim::simple(d.expr.clone(), target_suffix, target_conv.clone());
+                                Value::Quantity(Quantity::new(target_value, result_dim))
+                            }
+                            _ => v, // Not a quantity, return as-is
                         }
-                        _ => v, // Not a quantity, return as-is
+                    } else {
+                        // Compound unit in target - just return as-is
+                        v
                     }
                 } else {
                     // No unit constraint, just ensure it has the right dimension
                     Value::from(Quantity::one().with_dim(d))
                 }
             }
+            Ty::Function => v,
+            Ty::Io => v,
             Ty::List | Ty::Tuple(_) => v,
+            Ty::Object => v,
             Ty::Unit => v,
             Ty::Type => v,
             Ty::Empty => Value::Empty,

@@ -376,6 +376,123 @@ impl<'ctx> Interpreter<'ctx> {
             Err(err) => Err(err),
         }
     }
+
+    /// Invoke a function using already-evaluated argument values.
+    pub fn invoke_with_values(
+        &mut self,
+        f: &Function,
+        mut values: Vec<Value>,
+        call_site: SourceSpan,
+    ) -> InterpResult<Value> {
+        use rt::FunctionKind;
+
+        let is_variadic = f.params.last().map_or(false, |p| p.is_variadic());
+        let expected_fixed_args = if is_variadic {
+            f.params.len() - 1
+        } else {
+            f.params.len()
+        };
+
+        if !is_variadic && values.len() != f.params.len() {
+            return Err(InterpError::TypeError(TypeError {
+                expected: Some(format!(
+                    "function {} expects {} argument(s)",
+                    f.name.raw,
+                    f.params.len(),
+                )),
+                found: call_site.into_spanned(format!("found {}", values.len())),
+                context: None,
+            }));
+        }
+        if is_variadic && values.len() < expected_fixed_args {
+            return Err(InterpError::TypeError(TypeError {
+                expected: Some(format!(
+                    "function {} expects at least {} argument(s)",
+                    f.name.raw,
+                    expected_fixed_args,
+                )),
+                found: call_site.into_spanned(format!("found {}", values.len())),
+                context: None,
+            }));
+        }
+
+        let mut coerced_values = Vec::new();
+        for (i, param) in f.params.iter().enumerate() {
+            if param.is_variadic() {
+                let rest = values.split_off(i);
+                if matches!(&f.kind, FunctionKind::Native(_)) {
+                    coerced_values.extend(rest);
+                } else {
+                    coerced_values.push(Value::List(VRef::new(rest)));
+                }
+                break;
+            }
+
+            let mut v = values
+                .get(i)
+                .cloned()
+                .ok_or_else(|| InterpError::TypeError(TypeError {
+                    expected: Some(format!("function {} expects argument", f.name.raw)),
+                    found: call_site.into_spanned("missing argument".to_string()),
+                    context: None,
+                }))?;
+
+            let ty = param.ty.clone().map_or(rt::Ty::Any, |ty| ty.raw);
+            if ty.is_ref() {
+                match v {
+                    Value::Ref(_) => coerced_values.push(v),
+                    _ => {
+                        return Err(InterpError::TypeError(TypeError {
+                            expected: Some("reference".to_string()),
+                            found: call_site.into_spanned(v.ty().pretty_string(self.ctx)),
+                            context: Some(param.name.to_string_inner()),
+                        }))
+                    }
+                }
+            } else {
+                coerced_values.push(rt::coerce::to_ty(self.ctx, v, ty));
+            }
+        }
+
+        let result = match &f.kind {
+            FunctionKind::Native(builtin) => builtin(self.ctx, coerced_values).map_err(InterpError::from),
+            FunctionKind::Source(body) => {
+                let frame = StackFrame::new(f.name.clone(), call_site);
+                let scope = LocalScope::from(
+                    f.params
+                        .iter()
+                        .map(|p| p.name.raw)
+                        .zip(coerced_values.into_iter()),
+                );
+
+                Context::with_fn_call(self, frame, scope, |intrp| {
+                    Interp::<Value>::eval(body, intrp)
+                })
+            }
+        };
+
+        match result {
+            Ok(value) => Ok(value),
+            Err(InterpError::Return(value)) => Ok(value),
+            Err(err) => Err(err),
+        }
+    }
+}
+
+/// Convenience for calling a function value from builtin code.
+pub fn call_function(
+    ctx: &mut Context,
+    f: Function,
+    values: Vec<Value>,
+) -> Result<Value, Exception> {
+    let mut intrp = Interpreter::new(ctx);
+    match intrp.invoke_with_values(&f, values, SourceSpan::default()) {
+        Ok(v) => Ok(v),
+        Err(InterpError::Return(v)) => Ok(v),
+        Err(InterpError::Exception(e)) => Err(e),
+        Err(other) => Err(Exception::new("RuntimeError", other.to_string())
+            .with_backtrace(ctx.backtrace())),
+    }
 }
 
 impl ContextProvider for Interpreter<'_> {
@@ -464,7 +581,11 @@ impl<'ctx> Interp<'ctx, Option<Value>> for Item {
             ItemKind::OpDecl(decl) => decl.eval(intrp).map(|_| None),
             ItemKind::ConstDecl(decl) => decl.eval(intrp).map(|_| None),
             ItemKind::FnDecl(decl) => Interp::<()>::eval(decl, intrp).map(|_| None),
-            ItemKind::Expr(expr) => Ok(Some(Interp::<Value>::eval(expr, intrp)?)),
+            ItemKind::Expr(expr) => {
+                let v = Interp::<Value>::eval(expr, intrp)?;
+                intrp.ctx.set_last_value(v.clone());
+                Ok(Some(v))
+            }
         }
     }
 }
@@ -478,6 +599,9 @@ impl<'ctx> Interp<'ctx, ()> for Directive {
         no_trace! {self, intrp, "Interp::<()>::Directive", {
             match &self.kind {
                 &DirectiveKind::FloatPrecision(prec) => intrp.ctx.config.float_precision = prec,
+                DirectiveKind::DefaultFormatter(name) => {
+                    intrp.ctx.set_default_formatter(name.raw);
+                }
                 _ => (), // nothing to do for other directives, as they are used during parsing
             }
             Ok(())
@@ -494,7 +618,12 @@ impl<'ctx> Interp<'ctx, ()> for DimDecl {
                 None => rt::DimExpr::Dimension(self.name.raw),
             };
 
-            let dimension = rt::Dimension::new(name, dim_expr);
+            let dimension = if let Some(ref label) = self.label {
+                rt::Dimension::with_label(name, dim_expr, label.as_spanned_ustr())
+            } else {
+                rt::Dimension::new(name, dim_expr)
+            };
+
             intrp
                 .active_module()
                 .register_dimension(dimension)
@@ -509,31 +638,79 @@ impl<'ctx> Interp<'ctx, ()> for UnitDecl {
             let kind = self.kind;
             let name = self.name.as_spanned_ustr();
             let suffixes = self.suffixes.iter().map(|s| s.as_spanned_ustr()).collect();
-            let dim_expr = self.dimension.eval(intrp)?;
 
-            let unit = match &self.value {
-                Some(value) => match value {
-                    Left(expr) => {
-                        let value = Interp::<Value>::eval(expr, intrp)?;
-                        let num = match CastInto::<rt::Number>::cast(intrp.ctx, value) {
-                            Ok(num) => num,
-                            Err(_) => {
-                                return Err(TypeError::mismatch(
-                                    format!("expected scalar value in unit declaration"),
-                                    expr.span().into_spanned("given value".to_string()),
-                                )
-                                .into());
-                            }
-                        };
-                        rt::Unit::new(kind, name, suffixes, dim_expr, num)
+            let unit = match (&self.dimension, &self.value) {
+                // Expression-based unit: dimension is None, compute from expression
+                (None, Some(Left(expr))) => {
+                    let value = Interp::<Value>::eval(expr, intrp)?;
+
+                    // Extract dimension and conversion factor from the evaluated expression
+                    match value {
+                        Value::Quantity(q) => {
+                            let dim_expr = q.dim.expr.clone();
+                            let num = q.number.clone();
+                            rt::Unit::new(kind, name, suffixes, dim_expr, num)
+                        }
+                        _ => {
+                            // Scalar value - treat as dimensionless
+                            let num = match CastInto::<rt::Number>::cast(intrp.ctx, value) {
+                                Ok(num) => num,
+                                Err(_) => {
+                                    return Err(TypeError::mismatch(
+                                        format!("expected scalar or quantity value in unit declaration"),
+                                        expr.span().into_spanned("given value".to_string()),
+                                    )
+                                    .into());
+                                }
+                            };
+                            rt::Unit::new(kind, name, suffixes, rt::DimExpr::one(), num)
+                        }
                     }
-                    Right(unit_impl) => {
-                        let impl_obj = Interp::<rt::UnitImpl>::eval(unit_impl, intrp)?;
-                        let conversion = rt::Conversion::Impl(impl_obj);
-                        rt::Unit::with_conversion(kind, name, suffixes, dim_expr, conversion)
-                    },
-                },
-                None => rt::Unit::new(kind, name, suffixes, dim_expr, rt::Number::Int(1.into()))
+                }
+
+                // Standard units with explicit dimension
+                (Some(dimension), value_opt) => {
+                    let dim_expr = dimension.eval(intrp)?;
+
+                    match value_opt {
+                        Some(value) => match value {
+                            Left(expr) => {
+                                let value = Interp::<Value>::eval(expr, intrp)?;
+                                let num = match CastInto::<rt::Number>::cast(intrp.ctx, value) {
+                                    Ok(num) => num,
+                                    Err(_) => {
+                                        return Err(TypeError::mismatch(
+                                            format!("expected scalar value in unit declaration"),
+                                            expr.span().into_spanned("given value".to_string()),
+                                        )
+                                        .into());
+                                    }
+                                };
+                                rt::Unit::new(kind, name, suffixes, dim_expr, num)
+                            }
+                            Right(unit_impl) => {
+                                let impl_obj = Interp::<rt::UnitImpl>::eval(unit_impl, intrp)?;
+                                let conversion = rt::Conversion::Impl(impl_obj);
+                                rt::Unit::with_conversion(kind, name, suffixes, dim_expr, conversion)
+                            },
+                        },
+                        None => rt::Unit::new(kind, name, suffixes, dim_expr, rt::Number::Int(1.into()))
+                    }
+                }
+
+                // Invalid: dimension None with unit_impl
+                (None, Some(Right(_))) => {
+                    return Err(TypeError::simple(
+                        self.name.span().into_spanned("unit implementation requires explicit dimension annotation".to_string())
+                    ).into());
+                }
+
+                // Invalid: neither dimension nor value
+                (None, None) => {
+                    return Err(TypeError::simple(
+                        self.name.span().into_spanned("unit declaration requires either dimension or value expression".to_string())
+                    ).into());
+                }
             };
 
             // Use update_unit instead of register_unit to replace placeholder units registered during parsing
@@ -691,7 +868,7 @@ impl<'ctx> Interp<'ctx, rt::Param> for Param {
                         let module = intrp.ctx.active_module_mut().unwrap();
                         if let Ok(unit) = module.resolve_unit_suffix(ident.as_spanned_ustr()) {
                             // This is a unit constraint - create a Dim with unit info
-                            rt::Ty::Dim(rt::Dim::new(unit.dim_expr.clone(), Some((ident.raw, unit.conversion.clone()))))
+                            rt::Ty::Dim(rt::Dim::simple(unit.dim_expr.clone(), ident.raw, unit.conversion.clone()))
                         } else {
                             // Not a unit, treat as a regular dimension expression
                             rt::Ty::Dim(rt::Dim::from(dim_node.eval(intrp)?))
@@ -789,11 +966,94 @@ impl<'ctx> Interp<'ctx, LRValue> for Expr {
                     }
                     Ok(LRValue::R(value))
                 }
-                ExprKind::InfixOp(op, lhs, rhs) => {
-                    let func = op.eval(intrp)?;
-                    let args = ListNode::from(vec![*lhs.clone(), *rhs.clone()]);
-                    Ok(LRValue::R(intrp.invoke(&func, args, op.span())?))
+            ExprKind::InfixOp(op, lhs, rhs) => {
+                let func = op.eval(intrp)?;
+                let args = ListNode::from(vec![*lhs.clone(), *rhs.clone()]);
+                Ok(LRValue::R(intrp.invoke(&func, args, op.span())?))
+            }
+            ExprKind::IndexAssign(container, index, value) => {
+                // Evaluate container and index refs (container must be mutable for list/object)
+                let container_ref = Interp::<ValueRef>::eval(container, intrp)?;
+                let idx_val = Interp::<Value>::eval(index, intrp)?;
+                let new_val = Interp::<Value>::eval(value, intrp)?;
+
+                let mut container_mut = container_ref.borrow_mut();
+                match &mut *container_mut {
+                    Value::List(list) => {
+                        let idx_usize = match idx_val {
+                            Value::Quantity(q) if q.is_dimless() => q
+                                .number
+                                .into_int(intrp.ctx)
+                                .map_err(InterpError::from)?
+                                .to_usize()
+                                .ok_or_else(|| {
+                                    InterpError::Exception(Exception::new(
+                                        "IndexError",
+                                        "index must be non-negative".to_string(),
+                                    )
+                                    .with_backtrace(intrp.ctx.backtrace()))
+                                })?,
+                            _ => {
+                                return Err(InterpError::Exception(Exception::new(
+                                    "TypeError",
+                                    "list index must be an integer".to_string(),
+                                )
+                                .with_backtrace(intrp.ctx.backtrace())));
+                            }
+                        };
+
+                        let mut vec_ref = list.borrow_mut();
+                        if idx_usize >= vec_ref.len() {
+                            return Err(InterpError::Exception(
+                                Exception::new(
+                                    "IndexError",
+                                    format!("list index out of range: {}", idx_usize),
+                                )
+                                .with_backtrace(intrp.ctx.backtrace()),
+                            ));
+                        }
+                        vec_ref[idx_usize] = new_val;
+                        Ok(LRValue::R(Value::Empty))
+                    }
+                    Value::Object(object) => {
+                        let key = match idx_val {
+                            Value::String(s) => s,
+                            _ => {
+                                return Err(InterpError::Exception(
+                                    Exception::new(
+                                        "TypeError",
+                                        "object indices must be strings".to_string(),
+                                    )
+                                    .with_backtrace(intrp.ctx.backtrace()),
+                                ));
+                            }
+                        };
+
+                        let key_ustr = Ustr::from(&key);
+                        let mut fields = object.borrow_mut();
+                        if let Some((_, val)) = fields.iter_mut().find(|(k, _)| *k == key_ustr) {
+                            *val = new_val;
+                        } else {
+                            fields.push((key_ustr, new_val));
+                        }
+                        Ok(LRValue::R(Value::Empty))
+                    }
+                    Value::Tuple(_) => Err(InterpError::Exception(
+                        Exception::new("TypeError", "cannot assign into tuple".to_string())
+                            .with_backtrace(intrp.ctx.backtrace()),
+                    )),
+                    other => Err(InterpError::Exception(
+                        Exception::new(
+                            "TypeError",
+                            format!(
+                                "cannot assign to index of type: {}",
+                                other.ty().pretty_string(intrp.ctx)
+                            ),
+                        )
+                        .with_backtrace(intrp.ctx.backtrace()),
+                    )),
                 }
+            }
                 ExprKind::PrefixOp(op, expr) => {
                     let func = op.eval(intrp)?;
                     let args = ListNode::from(vec![*expr.clone()]);
@@ -870,6 +1130,19 @@ impl<'ctx> Interp<'ctx, LRValue> for Expr {
                     }
                     Ok(LRValue::R(Value::List(VRef::new(values))))
                 }
+                ExprKind::Object(node) => {
+                    let mut fields: Vec<(Ustr, Value)> = vec![];
+                    for field in node.iter() {
+                        let key = Ustr::from(field.key.raw.as_str());
+                        let value = Interp::<Value>::eval(&field.value, intrp)?;
+                        if let Some((_, existing)) = fields.iter_mut().find(|(k, _)| *k == key) {
+                            *existing = value.into();
+                        } else {
+                            fields.push((key, value.into()));
+                        }
+                    }
+                    Ok(LRValue::R(Value::object(fields)))
+                }
                 ExprKind::Tuple(node) => {
                     let mut values = vec![];
                     for item in node.iter() {
@@ -899,6 +1172,20 @@ impl<'ctx> Interp<'ctx, LRValue> for Expr {
                         .resolve_unit_suffix(unit.clone().into_raw_spanned())?;
                     Ok(LRValue::R(Value::Unit(unit.name.into())))
                 }
+                ExprKind::Slice(container, start, stop) => {
+                    let value = Interp::<Value>::eval(container, intrp)?;
+                    let start_val = match start {
+                        Some(expr) => Some(Interp::<Value>::eval(expr, intrp)?),
+                        None => None,
+                    };
+                    let stop_val = match stop {
+                        Some(expr) => Some(Interp::<Value>::eval(expr, intrp)?),
+                        None => None,
+                    };
+
+                    let slice_result = apply_slice(intrp.ctx, value, start_val, stop_val)?;
+                    Ok(LRValue::R(slice_result))
+                }
                 ExprKind::Type(ty) => {
                     let ty = ty.eval(intrp)?;
                     Ok(LRValue::R(Value::Ty(ty)))
@@ -921,6 +1208,101 @@ impl<'ctx> Interp<'ctx, Value> for Expr {
             LRValue::R(value) => Ok(value),
         }
     }
+}
+
+fn value_to_isize(ctx: &mut Context, value: Value) -> Result<isize, Exception> {
+    match value {
+        Value::Ref(r) => value_to_isize(ctx, r.borrow().clone()),
+        Value::Quantity(q) if q.is_dimless() => {
+            let int = q.number.into_int(ctx)?;
+            int.to_isize().ok_or_else(|| {
+                Exception::new("IndexError", "index must be non-negative and in range".to_string())
+                    .with_backtrace(ctx.backtrace())
+            })
+        }
+        other => Err(Exception::new(
+            "TypeError",
+            format!("slice indices must be integers, found {}", other.ty().pretty_string(ctx)),
+        )
+        .with_backtrace(ctx.backtrace())),
+    }
+}
+
+fn apply_slice(
+    ctx: &mut Context,
+    container: Value,
+    start: Option<Value>,
+    stop: Option<Value>,
+) -> Result<Value, InterpError> {
+    let (len, slicer): (usize, Box<dyn Fn(usize, usize) -> Value>) = match container {
+        Value::List(list) => {
+            let items = list.borrow().clone();
+            let len = items.len();
+            let slicer = move |start, stop| {
+                let slice = items[start..stop].to_vec();
+                Value::list(slice)
+            };
+            (len, Box::new(slicer))
+        }
+        Value::Tuple(tuple) => {
+            let items: Vec<Value> = tuple.iter().map(|v| (**v).clone()).collect();
+            let len = items.len();
+            let slicer = move |start, stop| {
+                let slice = items[start..stop].to_vec();
+                Value::Tuple(SmallVec::from_vec(slice.into_iter().map(Box::new).collect()))
+            };
+            (len, Box::new(slicer))
+        }
+        Value::String(s) => {
+            let chars: Vec<char> = s.chars().collect();
+            let len = chars.len();
+            let slicer = move |start, stop| {
+                let slice: String = chars[start..stop].iter().collect();
+                Value::String(slice)
+            };
+            (len, Box::new(slicer))
+        }
+        other => {
+            return Err(InterpError::from(Exception::new(
+                "TypeError",
+                format!(
+                    "cannot slice type: {}",
+                    other.ty().pretty_string(ctx)
+                ),
+            )
+            .with_backtrace(ctx.backtrace())))
+        }
+    };
+
+    let len_isize = len as isize;
+
+    let mut start_idx = match start {
+        Some(v) => value_to_isize(ctx, v)?,
+        None => 0,
+    };
+    let mut stop_idx = match stop {
+        Some(v) => value_to_isize(ctx, v)?,
+        None => len_isize,
+    };
+
+    if start_idx < 0 {
+        start_idx += len_isize;
+    }
+    if stop_idx < 0 {
+        stop_idx += len_isize;
+    }
+
+    start_idx = start_idx.clamp(0, len_isize);
+    stop_idx = stop_idx.clamp(0, len_isize);
+
+    let (start_u, stop_u) = if start_idx > stop_idx {
+        let v = stop_idx as usize;
+        (v, v)
+    } else {
+        (start_idx as usize, stop_idx as usize)
+    };
+
+    Ok(slicer(start_u, stop_u))
 }
 
 impl<'ctx> Interp<'ctx, ValueRef> for Expr {
@@ -958,10 +1340,13 @@ impl<'ctx> Interp<'ctx, rt::Ty> for Ty {
                 TyKind::Int => Ty::Int,
                 TyKind::Float => Ty::Float,
                 TyKind::Str => Ty::Str,
+                TyKind::Function => Ty::Function,
+                TyKind::Io => Ty::Io,
                 TyKind::Num => Ty::Num,
                 TyKind::Unit => Ty::Unit,
                 TyKind::Type => Ty::Type,
                 TyKind::List => Ty::List,
+                TyKind::Object => Ty::Object,
                 TyKind::Tuple(tys) => {
                     let tys = tys.eval(intrp)?.into_iter().map(|ty| Box::new(ty)).collect();
                     Ty::Tuple(SmallVec::from_vec(tys))
@@ -992,6 +1377,12 @@ impl<'ctx> Interp<'ctx, Value> for Path {
             .ctx
             .resolve_variable(self.path_parts())
             .map(|vref| vref.get())
+            .or_else(|_| {
+                intrp
+                    .ctx
+                    .resolve_function(self.path_parts())
+                    .map(|f| Value::Function(f.clone()))
+            })
             .map_err(InterpError::from)
     }
 }
@@ -1017,7 +1408,12 @@ impl<'ctx> Interp<'ctx, Value> for Ident {
     fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<Value> {
         trace! {self, intrp, "Interp::<Value>::Ident", {
             let name = self.as_spanned_ustr();
-            intrp.ctx.resolve_variable(name).map(|vref| vref.get()).map_err(InterpError::from)
+            intrp
+                .ctx
+                .resolve_variable(name)
+                .map(|vref| vref.get())
+                .or_else(|_| intrp.ctx.resolve_function(name).map(|f| Value::Function(f.clone())))
+                .map_err(InterpError::from)
         }}
     }
 }

@@ -14,8 +14,8 @@ mod source;
 use id::{ModuleId, SourceId};
 use print::ansi::{GREEN, RESET, YELLOW};
 use print::{PrettyPrint, PrettyString};
-use runtime::Context;
-use source::SourceFile;
+use runtime::{Context, IoHandle, Value};
+use source::{SourceFile, SourceSpan, Spanned};
 
 use std::env;
 use std::io;
@@ -95,12 +95,78 @@ fn evaluate(
     match driver::eval_source(ctx, source_id, module_id) {
         Ok(Some(value)) if print_result => {
             use crate::print::DisplayString;
-            Ok(println!(
-                "{GREEN}RESULT:{RESET} {}",
-                value.display_string(ctx)
-            ))
+            if let Some(buf) = ctx.take_pending_output() {
+                Ok(println!("{GREEN}RESULT:{RESET} {}", buf))
+            } else {
+                // If a default formatter is configured, try to use it before falling back to
+                // the regular display_string.
+                if let Some(fmt_name) = ctx.default_formatter.clone() {
+                    let fmt_span = SourceSpan::default();
+                    if let Ok(func) = ctx.modules[module_id]
+                        .resolve_function(Spanned::new(fmt_name, fmt_span))
+                        .cloned()
+                    {
+                        let io = IoHandle::buffer();
+                        let res = Context::with_active_module(ctx, module_id, |ctx| {
+                            crate::interp::call_function(
+                                ctx,
+                                func,
+                                vec![value.clone(), Value::Io(io.clone())],
+                            )
+                        });
+                        if res.is_ok() {
+                            if let Some(buf) = io.take_buffer() {
+                                return Ok(println!("{GREEN}RESULT:{RESET} {}", buf));
+                            }
+                        }
+                    }
+                }
+
+                Ok(println!(
+                    "{GREEN}RESULT:{RESET} {}",
+                    value.display_string(ctx)
+                ))
+            }
         }
-        Ok(None) if print_result => Ok(println!("{GREEN}RESULT:{RESET} {YELLOW}None{RESET}")),
+        Ok(None) if print_result => {
+            // Fallback: if interpretation returned None, try to use the last evaluated value
+            // (e.g., when a trailing directive wipes the result).
+            if let Some(value) = ctx.take_last_value() {
+                use crate::print::DisplayString;
+                if let Some(buf) = ctx.take_pending_output() {
+                    return Ok(println!("{GREEN}RESULT:{RESET} {}", buf));
+                } else if let Some(fmt_name) = ctx.default_formatter.clone() {
+                    let fmt_span = SourceSpan::default();
+                    if let Ok(func) = ctx.modules[module_id]
+                        .resolve_function(Spanned::new(fmt_name, fmt_span))
+                        .cloned()
+                    {
+                        let io = IoHandle::buffer();
+                        let res = Context::with_active_module(ctx, module_id, |ctx| {
+                            crate::interp::call_function(
+                                ctx,
+                                func,
+                                vec![value.clone(), Value::Io(io.clone())],
+                            )
+                        });
+                        if res.is_ok() {
+                            if let Some(buf) = io.take_buffer() {
+                                return Ok(println!("{GREEN}RESULT:{RESET} {}", buf));
+                            }
+                        }
+                    }
+                }
+
+                Ok(println!(
+                    "{GREEN}RESULT:{RESET} {}",
+                    value.display_string(ctx)
+                ))
+            } else if let Some(buf) = ctx.take_pending_output() {
+                Ok(println!("{GREEN}RESULT:{RESET} {}", buf))
+            } else {
+                Ok(println!("{GREEN}RESULT:{RESET} {YELLOW}None{RESET}"))
+            }
+        }
         Ok(_) => Ok(()),
         Err(err) => {
             err.print_stderr(ctx);

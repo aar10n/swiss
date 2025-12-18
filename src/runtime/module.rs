@@ -1,3 +1,4 @@
+use super::conversion::ConversionGraph;
 use super::dimension::{DimExpr, Dimension, DimensionTable};
 use super::interface::{Interface, InterfaceTable};
 use super::name::{Constant, Function, Name, NameResult, NameTable, Param};
@@ -30,6 +31,7 @@ pub struct Module {
     pub interfaces: InterfaceTable,
     pub operators: OperatorTable,
     pub units: UnitTable,
+    pub conversion_graph: ConversionGraph,
     pub unnamed: BTreeMap<VarId, Function>,
 }
 
@@ -44,6 +46,7 @@ impl Module {
             interfaces: InterfaceTable::new(),
             operators: OperatorTable::new_with_builtins(),
             units: UnitTable::new(),
+            conversion_graph: ConversionGraph::new(),
             unnamed: BTreeMap::new(),
         }
     }
@@ -135,12 +138,28 @@ impl Module {
             }
         }
 
+        // Register in conversion graph
+        self.conversion_graph.register_unit(
+            unit.name.raw,
+            unit.dim_expr.clone(),
+            unit.conversion.clone(),
+            unit.is_base(),
+        );
+
         self.units.insert(unit);
         Ok(())
     }
 
     /// Update an existing unit (used during interpretation to replace placeholder units)
     pub fn update_unit(&mut self, unit: Unit) {
+        // Register in conversion graph
+        self.conversion_graph.register_unit(
+            unit.name.raw,
+            unit.dim_expr.clone(),
+            unit.conversion.clone(),
+            unit.is_base(),
+        );
+
         self.units.insert(unit);
     }
 

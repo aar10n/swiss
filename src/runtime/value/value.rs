@@ -1,4 +1,4 @@
-use super::super::{Context, Exception};
+use super::super::{Context, Conversion, Exception, Function, IoHandle};
 use super::{Dim, Number, Quantity, Ty};
 pub use super::{VRef, ValueRef};
 
@@ -40,10 +40,13 @@ impl PrettyPrint<Context> for LRValue {
 pub enum Value {
     Ref(ValueRef),
     List(VRef<Vec<Value>>),
+    Object(VRef<Vec<(Ustr, Value)>>),
     Tuple(SmallVec<[Box<Value>; 3]>),
     Quantity(Quantity),
     String(String),
     Boolean(bool),
+    Function(Function),
+    Io(IoHandle),
     Unit(Ustr),
     Ty(Ty),
     Empty,
@@ -52,6 +55,10 @@ pub enum Value {
 impl Value {
     pub fn list(values: Vec<Value>) -> Self {
         Value::List(VRef::new(values))
+    }
+
+    pub fn object(values: Vec<(Ustr, Value)>) -> Self {
+        Value::Object(VRef::new(values))
     }
 
     pub fn is_ref(&self) -> bool {
@@ -66,10 +73,13 @@ impl Value {
         match &self {
             Value::Ref(r) => r.borrow().is_zero(),
             Value::List(l) => l.borrow().is_empty(),
+            Value::Object(o) => o.borrow().is_empty(),
             Value::Tuple(t) => t.is_empty(),
             Value::Quantity(q) => q.is_zero(),
             Value::String(s) => s.is_empty(),
             Value::Boolean(b) => !b,
+            Value::Function(_) => false,
+            Value::Io(_) => false,
             Value::Unit(_) => false,
             Value::Ty(_) => false,
             Value::Empty => false,
@@ -96,6 +106,7 @@ impl Value {
         match &self {
             Value::Ref(r) => r.borrow().ty(),
             Value::List(_) => Ty::List,
+            Value::Object(_) => Ty::Object,
             Value::Tuple(t) => Ty::Tuple(t.iter().map(|v| Box::new(v.ty())).collect()),
             Value::Quantity(q) => {
                 if !q.dim.is_none() {
@@ -108,6 +119,8 @@ impl Value {
             }
             Value::String(_) => Ty::Str,
             Value::Boolean(_) => Ty::Bool,
+            Value::Function(_) => Ty::Function,
+            Value::Io(_) => Ty::Io,
             Value::Unit(_) => Ty::Unit,
             Value::Ty(_) => Ty::Type,
             Value::Empty => Ty::Empty,
@@ -196,6 +209,17 @@ impl PrettyPrint<Context> for Value {
                 write!(out, "&")?;
                 r.borrow().pretty_print(out, ctx, level)
             }
+            Value::Object(o) => {
+                write!(out, "{{")?;
+                for (i, (key, value)) in o.borrow().iter().enumerate() {
+                    if i > 0 {
+                        write!(out, ", ")?;
+                    }
+                    write!(out, "\"{}\": ", key)?;
+                    value.pretty_print(out, ctx, level)?;
+                }
+                write!(out, "}}")
+            }
             Value::Tuple(t) => {
                 write!(out, "(")?;
                 for (i, v) in t.iter().enumerate() {
@@ -219,7 +243,17 @@ impl PrettyPrint<Context> for Value {
             Value::Quantity(q) => q.pretty_print(out, ctx, level),
             Value::String(s) => write!(out, "{:?}", s),
             Value::Boolean(b) => write!(out, "{}", b),
-            Value::Unit(u) => write!(out, "{:?}", u),
+            Value::Function(f) => write!(out, "<fn {}>", f.name.raw),
+            Value::Io(_) => write!(out, "<io>"),
+            Value::Unit(u) => {
+                // Prefer registered unit name; fall back to raw identifier.
+                let name = ctx
+                    .active_module()
+                    .and_then(|m| m.units.get(*u))
+                    .map(|unit| unit.name.raw.to_string())
+                    .unwrap_or_else(|| u.to_string());
+                write!(out, "{}", name)
+            }
             Value::Ty(t) => write!(out, "{:?}", t),
             Value::Empty => write!(out, "()"),
         }
@@ -237,6 +271,17 @@ impl EvalPrint<Context> for Value {
             Value::Ref(r) => {
                 write!(out, "&")?;
                 r.borrow().display_print(out, ctx, level)
+            }
+            Value::Object(o) => {
+                write!(out, "{{")?;
+                for (i, (key, value)) in o.borrow().iter().enumerate() {
+                    if i > 0 {
+                        write!(out, ", ")?;
+                    }
+                    write!(out, "\"{}\": ", key)?;
+                    value.display_print(out, ctx, level)?;
+                }
+                write!(out, "}}")
             }
             Value::Tuple(t) => {
                 write!(out, "(")?;
@@ -261,7 +306,30 @@ impl EvalPrint<Context> for Value {
             Value::Quantity(q) => q.display_print(out, ctx, level),
             Value::String(s) => write!(out, "{:?}", s),
             Value::Boolean(b) => write!(out, "{}", b),
-            Value::Unit(u) => write!(out, "{:?}", u),
+            Value::Function(f) => write!(out, "<fn {}>", f.name.raw),
+            Value::Io(_) => write!(out, "<io>"),
+            Value::Unit(u) => {
+                // Prefer display_name from unit impl if available.
+                let name = if let Some(module) = ctx.active_module() {
+                    if let Some(unit) = module.units.get(*u) {
+                        let unit_name = unit.name.raw;
+                        let conversion = unit.conversion.clone();
+                        match conversion {
+                            Conversion::Impl(unit_impl) => unit_impl
+                                .display_name(ctx)
+                                .ok()
+                                .flatten()
+                                .unwrap_or_else(|| unit_name.to_string()),
+                            _ => unit_name.to_string(),
+                        }
+                    } else {
+                        u.to_string()
+                    }
+                } else {
+                    u.to_string()
+                };
+                write!(out, "{}", name)
+            }
             Value::Ty(t) => write!(out, "{:?}", t),
             Value::Empty => write!(out, "()"),
         }

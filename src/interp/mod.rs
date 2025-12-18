@@ -37,6 +37,20 @@ impl_from_error!(NameError);
 impl_from_error!(TypeError);
 impl_from_error!(Exception);
 
+impl std::fmt::Display for InterpError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InterpError::DeclError(_) => write!(f, "declaration error"),
+            InterpError::NameError(_) => write!(f, "name error"),
+            InterpError::TypeError(_) => write!(f, "type error"),
+            InterpError::Exception(e) => write!(f, "{}: {}", e.kind, e.message),
+            InterpError::Return(_) => write!(f, "'return' used outside of function"),
+            InterpError::Break => write!(f, "'break' used outside of loop"),
+            InterpError::Continue => write!(f, "'continue' used outside of loop"),
+        }
+    }
+}
+
 impl IntoErrorCtx<Context> for InterpError {
     fn into_error_ctx(self, ctx: &Context) -> Error {
         match self {
@@ -73,7 +87,9 @@ pub fn interpret(ctx: &mut Context, ast_module: &Module) -> InterpResult<Option<
         let mut interp = interp::Interpreter::new(ctx);
         let mut value = None;
         for item in &ast_module.items {
-            value = item.eval(&mut interp)?;
+            if let Some(v) = item.eval(&mut interp)? {
+                value = Some(v);
+            }
         }
         Ok(value)
     })

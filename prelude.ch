@@ -36,6 +36,8 @@ infix operator (&&)(num,num) = builtin::and
 #[precedence=5]
 infix operator (<<)(num,num) = builtin::bit_shl
 infix operator (>>)(num,num) = builtin::bit_shr
+#[precedence=6]
+infix operator (//)(any,fn) = builtin::format_apply
 ; ------------------------
 #[associativity="right"]
 #[precedence=6]
@@ -58,130 +60,179 @@ infix operator (&)(num,num) = builtin::bit_and
 #[precedence=9]
 infix operator (^)(num,num) = builtin::pow
 #[precedence=10]
+infix operator ([])(any,any) = builtin::index
 infix operator (->)(num,unit) = builtin::unit_cast
-
 ;
-; Units
+; Dimensions and Units
 ;
 
-; base units:
-;  second    | s  | time
-;  meter     | m  | length
-;  kilogram  | kg | mass
-;  ampere    | A  | current
-;  kelvin    | K  | temperature
-;
-;  hertz     | Hz | frequency
-;  volt      | V  | voltage
-;  farad     | F  | capacitance
-;  ohm       | Ω  | resistance
-;  henry     | H  | inductance
-;  degree C  | °C | temperature
+; ============================================
+; Base SI Dimensions
+; ============================================
 
-dimension T                     ; time
-dimension L                     ; length
-dimension M                     ; mass
-dimension A                     ; current
-dimension Θ                     ; temperature
-dimension N                     ; amount of substance
-dimension J                     ; luminous intensity
-dimension V = T^-3 L^2 M A^-1   ; voltage
-dimension F = M^-1 L^-2 T^4 A^2 ; capacitance
-dimension Ω = M L^2 T^-3 A^-2   ; resistance
-dimension H = L^2 M T^-2 A^-2   ; inductance
-dimension Angle                 ; angle (dimensionless but tracked)
-dimension Data                  ; data storage (dimensionless but tracked)
+dimension T{time}
+dimension L{length}
+dimension M{mass}
+dimension A{current}
+dimension Θ{temperature}
+dimension N{amount}
+dimension J{luminous_intensity}
+
+; ============================================
+; Special Dimensions (dimensionless but tracked)
+; ============================================
+
+dimension Angle{angle}
+dimension Data{data_storage}
+
+; ============================================
+; Base SI Units
+; ============================================
 
 base unit second{s} = T
-unit picosecond{ps} [T] = 1.2e-12
-unit nanosecond{ns} [T] = 1e-9
-unit microsecond{us} [T] = 1e-6
-unit millisecond{ms} [T] = 1e-3
-unit minute{min} [T] = 60
-unit hour{h,hr} [T] = 3600
-unit day{day} [T] = 86400
-unit week{wk} [T] = 604800
-unit month{mo} [T] = 2629746
-unit year{yr} [T] = 31556952
-
 base unit meter{m} = L
-unit millimeter{mm} [L] = 1e-3
-unit centimeter{cm} [L] = 1e-2
-unit kilometer{km} [L] = 1e3
-unit inch{in} [L] = 0.0254
-unit foot{ft} [L] = 0.3048
-unit yard{yd} [L] = 0.9144
-unit mile{mi} [L] = 1609.34
-
 base unit kilogram{kg} = M
-unit gram{g} [M] = 1e-3
-unit tonne{t} [M] = 1e3
-
 base unit ampere{I} = A
-unit milliampere{mA} [A] = 1e-3
-unit microampere{μA,uA} [A] = 1e-6
-
 base unit kelvin{K} = Θ
+
+; ============================================
+; Time Units
+; ============================================
+
+unit picosecond{ps} = 1e-12 s
+unit nanosecond{ns} = 1e-9 s
+unit microsecond{us} = 1e-6 s
+unit millisecond{ms} = 1e-3 s
+unit minute{min} = 60 s
+unit hour{h,hr} = 3600 s
+unit day{day} = 86400 s
+unit week{wk} = 604800 s
+unit month{mo} = 2629746 s
+unit year{yr} = 31556952 s
+
+; ============================================
+; Length Units
+; ============================================
+
+unit millimeter{mm} = 1e-3 m
+unit centimeter{cm} = 1e-2 m
+unit kilometer{km} = 1e3 m
+
+; Imperial/US customary
+unit inch{in} = 0.0254 m
+unit foot{ft} = 0.3048 m
+unit yard{yd} = 0.9144 m
+unit mile{mi} = 1609.34 m
+
+; ============================================
+; Mass Units
+; ============================================
+
+unit gram{g} = 1e-3 kg
+unit tonne{t} = 1e3 kg
+
+; ============================================
+; Current Units
+; ============================================
+
+unit milliampere{mA} = 1e-3 I
+unit microampere{μA,uA} = 1e-6 I
+
+; ============================================
+; Temperature Units
+; ============================================
+
 unit degreeC{°C,dC} [Θ] = {
   fn display_name() { "°C" }
   fn to_base(c) { c + 273.15 }
   fn from_base(k) { k - 273.15 }
 }
+
 unit degreeF{°F,dF} [Θ] = {
   fn display_name() { "°F" }
   fn to_base(f) { (f - 32) * (5/9) + 273.15 }
   fn from_base(k) { (k - 273.15) * (9/5) + 32 }
 }
 
+; ============================================
+; Frequency Units (1/time)
+; ============================================
+
 base unit hertz{Hz} = 1/T
-unit kilohertz{kHz} [1/T] = 1e3
-unit megahertz{MHz} [1/T] = 1e6
-unit gigahertz{GHz} [1/T] = 1e9
+unit kilohertz{kHz} = 1e3 Hz
+unit megahertz{MHz} = 1e6 Hz
+unit gigahertz{GHz} = 1e9 Hz
+
+; ============================================
+; Electrical Units (with labeled dimensions)
+; ============================================
+
+dimension V{voltage} = T^-3 L^2 M A^-1
+dimension F{capacitance} = M^-1 L^-2 T^4 A^2
+dimension Ω{resistance} = M L^2 T^-3 A^-2
+dimension H{inductance} = L^2 M T^-2 A^-2
 
 base unit volt{V} = V
-unit millivolt{mV} [V] = 1e-3
-unit kilovolt{kV} [V] = 1e3
+unit millivolt{mV} = 1e-3 V
+unit kilovolt{kV} = 1e3 V
 
 base unit farad{F} = F
-unit millifarad{mF} [F] = 1e-3
-unit microfarad{μF,uF} [F] = 1e-6
-unit nanofarad{nF} [F] = 1e-9
-unit picofarad{pF} [F] = 1e-12
+unit millifarad{mF} = 1e-3 F
+unit microfarad{μF,uF} = 1e-6 F
+unit nanofarad{nF} = 1e-9 F
+unit picofarad{pF} = 1e-12 F
 
 base unit ohm{Ω,R} = Ω
-unit milliohm{mΩ,mR} [Ω] = 1e-3
-unit kiloohm{kΩ,kR} [Ω] = 1e3
-unit megaohm{MΩ,MR} [Ω] = 1e6
+unit milliohm{mΩ,mR} = 1e-3 Ω
+unit kiloohm{kΩ,kR} = 1e3 Ω
+unit megaohm{MΩ,MR} = 1e6 Ω
 
 base unit henry{H} = H
-unit millihenry{mH} [H] = 1e-3
-unit microhenry{μH,uH} [H] = 1e-6
-unit nanohenry{nH} [H] = 1e-9
-unit picohenry{pH} [H] = 1e-12
+unit millihenry{mH} = 1e-3 H
+unit microhenry{μH,uH} = 1e-6 H
+unit nanohenry{nH} = 1e-9 H
+unit picohenry{pH} = 1e-12 H
+
+; ============================================
+; Angle Units
+; ============================================
 
 base unit radian{rad} = Angle
+
 unit degree{deg,°} [Angle] = {
   fn to_base(x) { x * pi / 180 }
   fn from_base(x) { x * 180 / pi }
 }
+
 unit gradian{grad,gon} [Angle] = {
   fn to_base(x) { x * pi / 200 }
   fn from_base(x) { x * 200 / pi }
 }
+
 unit turn{turn} [Angle] = {
   fn to_base(x) { x * 2 * pi }
   fn from_base(x) { x / (2 * pi) }
 }
 
+; ============================================
+; Data Storage Units
+; ============================================
+
 base unit byte{B,byte} = Data
 unit kilobyte{KB} [Data] = 1024
-unit megabyte{MB} [Data] = 1024 * 1024
-unit gigabyte{GB} [Data] = 1024 * 1024 * 1024
-unit terabyte{TB} [Data] = 1024 * 1024 * 1024 * 1024
+unit megabyte{MB} [Data] = 1048576
+unit gigabyte{GB} [Data] = 1073741824
+unit terabyte{TB} [Data] = 1099511627776
 unit kibibyte{KiB} [Data] = 1024
-unit mebibyte{MiB} [Data] = 1024 * 1024
-unit gibibyte{GiB} [Data] = 1024 * 1024 * 1024
-unit tebibyte{TiB} [Data] = 1024 * 1024 * 1024 * 1024
+unit mebibyte{MiB} [Data] = 1048576
+unit gibibyte{GiB} [Data] = 1073741824
+unit tebibyte{TiB} [Data] = 1099511627776
+
+fn fmt_stdout(v: any, io) {
+  builtin::write(io, v)
+}
+
+#[default_formatter=fmt_stdout]
 
 ;
 ; Constants
@@ -197,6 +248,9 @@ const phi = 1.61803398874989484820
 
 fn len(v: any) { builtin::len(v) }
 fn print(v...) { builtin::print(v...) }
+fn reverse(v: any) { builtin::reverse(v) }
+fn delete(obj: object, key: str) { builtin::delete(obj, key) }
+fn append(list: list, item: any) { builtin::append(list, item) }
 
 fn abs(x: num) { if x < 0 { -x } else { x } }
 fn sign(x: num) { if x < 0 { -1 } else { if x > 0 { 1 } else { 0 } } }
@@ -260,7 +314,6 @@ fn align_down(x: num, a: num) {
 
 fn contains(l: list, v: any) {
   for item := range l {
-    print(item, v)
     if item == v {
       return true
     } else {

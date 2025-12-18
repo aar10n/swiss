@@ -138,6 +138,11 @@ impl PrettyPrint<Context> for Directive {
                 "{DIRECTIVE}unit_preference{RESET}{EQUALS}{IDENT}{:?}{RESET}",
                 preference
             ),
+            DirectiveKind::DefaultFormatter(name) => write!(
+                out,
+                "{DIRECTIVE}default_formatter{RESET}{EQUALS}{IDENT}{}{RESET}",
+                name.raw
+            ),
         }
     }
 }
@@ -427,6 +432,25 @@ impl PrettyPrint<Context> for Expr {
                 writeln!(out)?;
                 body.pretty_print(out, ctx, level + 1)
             }
+            ExprKind::Slice(container, start, stop) => {
+                container.pretty_print(out, ctx, 0)?;
+                write!(out, "{LBRAC}")?;
+                if let Some(start) = start {
+                    start.pretty_print(out, ctx, 0)?;
+                }
+                write!(out, "{PUNCT}:{RESET}")?;
+                if let Some(stop) = stop {
+                    stop.pretty_print(out, ctx, 0)?;
+                }
+                write!(out, "{RBRAC}")
+            }
+            ExprKind::IndexAssign(base, idx, rhs) => {
+                base.pretty_print(out, ctx, 0)?;
+                write!(out, "{LBRAC}")?;
+                idx.pretty_print(out, ctx, 0)?;
+                write!(out, "{RBRAC} {OPERATOR}={RESET} ")?;
+                rhs.pretty_print(out, ctx, 0)
+            }
             ExprKind::FnCall(func, args) => {
                 func.pretty_print(out, ctx, 0)?;
                 write!(out, "(")?;
@@ -452,6 +476,17 @@ impl PrettyPrint<Context> for Expr {
                 }
                 write!(out, "{RBRAC}")
             }
+            ExprKind::Object(object) => {
+                write!(out, "{{")?;
+                for (i, field) in object.items.iter().enumerate() {
+                    write!(out, "{STRING}\"{}\"{RESET}: ", field.key.raw)?;
+                    field.value.pretty_print(out, ctx, 0)?;
+                    if i < object.items.len() - 1 {
+                        write!(out, ", ")?;
+                    }
+                }
+                write!(out, "}}")
+            }
             ExprKind::Tuple(tuple) => {
                 write!(out, "{LPARN}")?;
                 for (i, item) in tuple.items.iter().enumerate() {
@@ -470,6 +505,20 @@ impl PrettyPrint<Context> for Expr {
             ExprKind::Unit(unit) => unit.pretty_print(out, ctx, level),
             ExprKind::Type(ty) => ty.pretty_print(out, ctx, level),
         }
+    }
+}
+
+impl PrettyPrint<Context> for ObjectField {
+    fn pretty_print<Output: io::Write>(
+        &self,
+        out: &mut Output,
+        ctx: &Context,
+        level: usize,
+    ) -> io::Result<()> {
+        let tab = TABWIDTH.repeat(level);
+        out.write_all(tab.as_bytes())?;
+        write!(out, "{STRING}\"{}\"{RESET}: ", self.key.raw)?;
+        self.value.pretty_print(out, ctx, level)
     }
 }
 
@@ -514,10 +563,13 @@ impl PrettyPrint<Context> for Ty {
             TyKind::Int => write!(out, "{ATTR}int{RESET}"),
             TyKind::Float => write!(out, "{ATTR}float{RESET}"),
             TyKind::Str => write!(out, "{ATTR}string{RESET}"),
+            TyKind::Function => write!(out, "{ATTR}fn{RESET}"),
+            TyKind::Io => write!(out, "{ATTR}io{RESET}"),
             TyKind::Num => write!(out, "{ATTR}num{RESET}"),
             TyKind::Unit => write!(out, "{ATTR}unit{RESET}"),
             TyKind::Type => write!(out, "{ATTR}type{RESET}"),
             TyKind::List => write!(out, "{ATTR}list{RESET}"),
+            TyKind::Object => write!(out, "{ATTR}object{RESET}"),
             TyKind::Tuple(tys) => {
                 write!(out, "{LPARN}")?;
                 for (i, ty) in tys.iter().enumerate() {

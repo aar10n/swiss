@@ -107,6 +107,10 @@ impl Directive {
     pub fn unit_preference(preference: UnitPreference) -> Self {
         Self::new(DirectiveKind::UnitPreference(preference))
     }
+
+    pub fn default_formatter(name: Spanned<Ustr>) -> Self {
+        Self::new(DirectiveKind::DefaultFormatter(name))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -118,6 +122,7 @@ pub enum DirectiveKind {
     FloatPrecision(u32),
     Precedence(isize),
     UnitPreference(UnitPreference),
+    DefaultFormatter(Spanned<Ustr>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -188,6 +193,7 @@ pub struct DimDecl {
     id: NodeId,
     span: SourceSpan,
     pub name: Ident,
+    pub label: Option<Ident>,
     pub dimension: Option<DimExpr>,
 }
 
@@ -197,6 +203,17 @@ impl DimDecl {
             id: node_id::next(),
             span: SourceSpan::default(),
             name,
+            label: None,
+            dimension,
+        }
+    }
+
+    pub fn with_label(name: Ident, label: Ident, dimension: Option<DimExpr>) -> Self {
+        Self {
+            id: node_id::next(),
+            span: SourceSpan::default(),
+            name,
+            label: Some(label),
             dimension,
         }
     }
@@ -210,7 +227,7 @@ pub struct UnitDecl {
     pub name: Ident,
     pub kind: UnitKind,
     pub suffixes: Vec<Ident>,
-    pub dimension: DimExpr,
+    pub dimension: Option<DimExpr>,
     pub value: Option<Either<Expr, UnitImpl>>,
 }
 
@@ -222,7 +239,7 @@ impl UnitDecl {
             name,
             kind: UnitKind::BaseUnit,
             suffixes,
-            dimension,
+            dimension: Some(dimension),
             value: None,
         }
     }
@@ -239,8 +256,24 @@ impl UnitDecl {
             name,
             kind: UnitKind::SubUnit,
             suffixes,
-            dimension,
+            dimension: Some(dimension),
             value: Some(value),
+        }
+    }
+
+    pub fn expr_unit(
+        name: Ident,
+        suffixes: Vec<Ident>,
+        expr: Either<Expr, UnitImpl>,
+    ) -> Self {
+        Self {
+            id: node_id::next(),
+            span: SourceSpan::default(),
+            name,
+            kind: UnitKind::SubUnit,
+            suffixes,
+            dimension: None,  // Will be computed from expr
+            value: Some(expr),
         }
     }
 }
@@ -511,10 +544,34 @@ impl Stmt {
 /// An expression.
 pub type Expr = KindNode<ExprKind>;
 
+/// A key-value pair within an object literal.
+#[derive(Clone, Debug)]
+pub struct ObjectField {
+    id: NodeId,
+    span: SourceSpan,
+    pub key: Spanned<String>,
+    pub value: Expr,
+}
+
+impl ObjectField {
+    pub fn new(key: Spanned<String>, value: Expr) -> Self {
+        Self {
+            id: node_id::next(),
+            span: SourceSpan::default(),
+            key,
+            value,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum ExprKind {
     /// An assignment expresion.
     Assign(P<BindPat>, P<Expr>),
+    /// An assignment to an index (e.g., list/object indexing).
+    IndexAssign(P<Expr>, P<Expr>, P<Expr>),
+    /// A slice expression (e.g., list[start:stop]).
+    Slice(P<Expr>, Option<P<Expr>>, Option<P<Expr>>),
     /// An infix operation.
     InfixOp(Operator, P<Expr>, P<Expr>),
     /// A prefix operation.
@@ -536,6 +593,8 @@ pub enum ExprKind {
     List(ListNode<Expr>),
     /// A tuple.
     Tuple(ListNode<Expr>),
+    /// An object literal.
+    Object(ListNode<ObjectField>),
     /// An identifier path.
     Path(Path),
     /// An identifier.
@@ -559,6 +618,22 @@ impl Expr {
 
     pub fn infix_op(op: Operator, lhs: Expr, rhs: Expr) -> Self {
         Self::new(ExprKind::InfixOp(op, lhs.into(), rhs.into()))
+    }
+
+    pub fn index_assign(container: Expr, index: Expr, value: Expr) -> Self {
+        Self::new(ExprKind::IndexAssign(
+            container.into(),
+            index.into(),
+            value.into(),
+        ))
+    }
+
+    pub fn slice(container: Expr, start: Option<Expr>, stop: Option<Expr>) -> Self {
+        Self::new(ExprKind::Slice(
+            container.into(),
+            start.map(Box::new),
+            stop.map(Box::new),
+        ))
     }
 
     pub fn prefix_op(op: Operator, expr: Expr) -> Self {
@@ -595,6 +670,10 @@ impl Expr {
 
     pub fn tuple(items: ListNode<Expr>) -> Self {
         Self::new(ExprKind::Tuple(items))
+    }
+
+    pub fn object(items: ListNode<ObjectField>) -> Self {
+        Self::new(ExprKind::Object(items))
     }
 
     pub fn path(path: Path) -> Self {
@@ -686,8 +765,11 @@ pub enum TyKind {
     Float,
     Str,
     Num,
+    Function,
+    Io,
     Unit,
     Type,
+    Object,
     List,
     Tuple(ListNode<Ty>),
     Ref(Box<Ty>),
@@ -718,6 +800,14 @@ impl Ty {
         Self::new(TyKind::Str)
     }
 
+    pub fn function() -> Self {
+        Self::new(TyKind::Function)
+    }
+
+    pub fn io() -> Self {
+        Self::new(TyKind::Io)
+    }
+
     pub fn list() -> Self {
         Self::new(TyKind::List)
     }
@@ -728,6 +818,10 @@ impl Ty {
 
     pub fn ty() -> Self {
         Self::new(TyKind::Type)
+    }
+
+    pub fn object() -> Self {
+        Self::new(TyKind::Object)
     }
 
     pub fn tuple(items: ListNode<Ty>) -> Self {
@@ -950,3 +1044,5 @@ impl_identifiable!(Ident);
 impl_spannable!(Ident);
 impl_identifiable!(StringLit);
 impl_spannable!(StringLit);
+impl_identifiable!(ObjectField);
+impl_spannable!(ObjectField);

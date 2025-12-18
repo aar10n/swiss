@@ -363,6 +363,12 @@ impl<'a> Parser<'a> {
                     };
                     Directive::unit_preference(preference)
                 }
+                "default_formatter" => {
+                    parser.expect(Token::Assign, "expected '='")?;
+                    parser.consume_any(Token::Space);
+                    let name = parser.parse_ident()?.as_spanned_ustr();
+                    Directive::default_formatter(name)
+                }
                 _ => {
                     let (directive, span) = directive.into_pair();
                     let err = DirectiveError::new("unknown directive", directive, span);
@@ -385,12 +391,33 @@ impl<'a> Parser<'a> {
             let name = parser.parse_ident()?;
             parser.consume_any(Token::Space);
 
+            // Parse optional label in curly braces: dimension Name{label}
+            let label = if parser.peek_token() == &Token::LDelim("{") {
+                parser.expect(Token::LDelim("{"), "expected '{'")?;
+                parser.consume_any(Token::Space);
+                let label = parser.parse_ident()?;
+                parser.consume_any(Token::Space);
+                parser.expect(Token::RDelim("}"), "expected '}'")?;
+                parser.consume_any(Token::Space);
+                Some(label)
+            } else {
+                None
+            };
+
             if let Some((Token::Assign, _)) = parser.consume_if(|t| t == &Token::Assign) {
                 parser.consume_any(Token::Space);
                 let expr = parser.parse_dim_expr()?;
-                Ok(DimDecl::new(name, Some(expr)))
+                if let Some(label) = label {
+                    Ok(DimDecl::with_label(name, label, Some(expr)))
+                } else {
+                    Ok(DimDecl::new(name, Some(expr)))
+                }
             } else {
-                Ok(DimDecl::new(name, None))
+                if let Some(label) = label {
+                    Ok(DimDecl::with_label(name, label, None))
+                } else {
+                    Ok(DimDecl::new(name, None))
+                }
             }
         })
     }
@@ -421,7 +448,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    // sub_unit_decl ::= 'unit' _ <ident> _ [<suffix_list>] '[' <dim_expr> ']' _ '=' (<expr> | <unit_impl>)
+    // sub_unit_decl ::= 'unit' _ <ident> _ [<suffix_list>] ('[' <dim_expr> ']')? _ '=' (<expr> | <unit_impl>)
     fn parse_sub_unit_decl(&mut self) -> ParseResult<UnitDecl> {
         self.span_and_trace("parse_sub_unit_decl", |parser| {
             parser.expect(Token::Keyword(Keyword::Unit), "expected 'unit'")?;
@@ -430,23 +457,28 @@ impl<'a> Parser<'a> {
             let name = parser.parse_ident()?;
             parser.consume_any(Token::Space);
 
+            // Parse optional suffixes
             let suffixes = if parser.peek_token() == &Token::LDelim("{") {
                 parser.parse_suffix_list()?
-            } else if parser.peek_token() == &Token::LDelim("[") {
-                vec![]
             } else {
-                return Err(SyntaxError::new("expected '[' or '{'", parser.position()).into());
+                vec![]
             };
 
             parser.consume_any(Token::Space);
-            parser.expect(Token::LDelim("["), "expected '['")?;
-            parser.consume_any(Token::Space);
 
-            let dimension = parser.parse_dim_expr()?;
-            parser.consume_any(Token::Space);
-            parser.expect(Token::RDelim("]"), "expected ']'")?;
+            // Parse optional dimension annotation
+            let dimension = if parser.peek_token() == &Token::LDelim("[") {
+                parser.expect(Token::LDelim("["), "expected '['")?;
+                parser.consume_any(Token::Space);
+                let dim = parser.parse_dim_expr()?;
+                parser.consume_any(Token::Space);
+                parser.expect(Token::RDelim("]"), "expected ']'")?;
+                parser.consume_any(Token::Space);
+                Some(dim)
+            } else {
+                None
+            };
 
-            parser.consume_any(Token::Space);
             parser.expect(Token::Assign, "expected '='")?;
             parser.consume_any(Token::Space);
 
@@ -457,7 +489,12 @@ impl<'a> Parser<'a> {
                 let expr = parser.parse_expr(isize::MIN)?;
                 Left(expr)
             };
-            Ok(UnitDecl::sub_unit(name, suffixes, dimension, value))
+
+            if let Some(dim) = dimension {
+                Ok(UnitDecl::sub_unit(name, suffixes, dim, value))
+            } else {
+                Ok(UnitDecl::expr_unit(name, suffixes, value))
+            }
         })
     }
 
@@ -700,6 +737,57 @@ impl<'a> Parser<'a> {
                     parser.consume_any(Token::Space);
 
                     lhs = Expr::postfix_op(lhs, op);
+                } else if is_index_op(parser.peek_token(), &parser.ctx) {
+                    // Parse bracketed index operator: <lhs> '[' <rhs> ']'
+                    let (_, lspan) = parser.expect(Token::LDelim("["), "expected '['")?;
+                    parser.consume_any(Token::Space);
+
+                    let op = parser
+                        .ctx
+                        .resolve_operator(OpKind::Infix, Spanned::new(Ustr::from("[]"), lspan))?;
+                    if op.prec < min_prec {
+                        parser.trace_debug("breaking loop");
+                        break;
+                    }
+
+                    let mut next_prec = op.prec;
+                    if op.is_right() {
+                        next_prec += 1;
+                    }
+
+                    // Detect slice syntax with ':'
+                    let mut is_slice = false;
+                    let mut start_expr: Option<Expr> = None;
+                    let mut stop_expr: Option<Expr> = None;
+
+                    if parser.peek_token() != &Token::Colon && parser.peek_token() != &Token::RDelim("]") {
+                        start_expr = Some(parser.parse_expr(next_prec)?);
+                        parser.consume_any(Token::Space);
+                    }
+
+                    if parser.peek_token() == &Token::Colon {
+                        is_slice = true;
+                        parser.next_token()?; // consume ':'
+                        parser.consume_any(Token::Space);
+
+                        if parser.peek_token() != &Token::RDelim("]") {
+                            stop_expr = Some(parser.parse_expr(next_prec)?);
+                            parser.consume_any(Token::Space);
+                        }
+                    }
+
+                    let (_, rspan) = parser.expect(Token::RDelim("]"), "expected ']'")?;
+                    let span = SourceSpan::new(parser.source_id, lspan.start, rspan.end);
+
+                    if is_slice {
+                        lhs = Expr::slice(lhs, start_expr, stop_expr).with_span(span);
+                    } else {
+                        let rhs = start_expr.ok_or_else(|| SyntaxError::new("expected expression", parser.position()))?;
+                        let op_span = SourceSpan::new(parser.source_id, lspan.start, rspan.end);
+                        let operator = Operator::new(Ustr::from("[]"), OpKind::Infix).with_span(op_span);
+
+                        lhs = Expr::infix_op(operator, lhs, rhs);
+                    }
                 } else if is_infix_op(parser.peek_token(), &parser.ctx) {
                     let operator = parser.peek_operator(OpKind::Infix)?;
                     let op = parser
@@ -723,16 +811,32 @@ impl<'a> Parser<'a> {
 
                     let rhs = parser.parse_expr(next_prec)?;
                     if op_name == "=" {
-                        let bind = match lhs.into_bind_pat() {
-                            Ok(bind) => bind,
-                            Err(problem) => {
-                                println!("problem: {} ({:?})", problem.raw, problem.span);
-                                let pos = problem.span.start_pos();
-                                return Err(SyntaxError::new(problem.raw, pos).into());
+                        // Support assignment to index expressions as a special case
+                        if let ExprKind::InfixOp(index_op, base, idx_expr) = &lhs.kind {
+                            if index_op.raw == Ustr::from("[]") {
+                                lhs = Expr::index_assign(*base.clone(), *idx_expr.clone(), rhs);
+                            } else {
+                                let bind = match lhs.into_bind_pat() {
+                                    Ok(bind) => bind,
+                                    Err(problem) => {
+                                        println!("problem: {} ({:?})", problem.raw, problem.span);
+                                        let pos = problem.span.start_pos();
+                                        return Err(SyntaxError::new(problem.raw, pos).into());
+                                    }
+                                };
+                                lhs = Expr::assign(bind, rhs);
                             }
-                        };
-
-                        lhs = Expr::assign(bind, rhs);
+                        } else {
+                            let bind = match lhs.into_bind_pat() {
+                                Ok(bind) => bind,
+                                Err(problem) => {
+                                    println!("problem: {} ({:?})", problem.raw, problem.span);
+                                    let pos = problem.span.start_pos();
+                                    return Err(SyntaxError::new(problem.raw, pos).into());
+                                }
+                            };
+                            lhs = Expr::assign(bind, rhs);
+                        }
                     } else if op_name == ":=" {
                         return Err(SyntaxError::new(
                             "unexpected ':=' outside of for-range loop",
@@ -765,6 +869,7 @@ impl<'a> Parser<'a> {
 
     // expr_term ::= '(' _ <expr> _ [(_ <expr> _) ++ ','] ')'
     //             | '[' (_ <expr> _) ** ',' ']'
+    //             | '{' (_ <string> _ ':' _ <expr> _) ** ',' '}'
     //             | <prefix_op> _ <expr>
     //             | <expr_atom>
     fn parse_expr_term(&mut self) -> ParseResult<Expr> {
@@ -800,6 +905,9 @@ impl<'a> Parser<'a> {
                         p.parse_expr(isize::MIN)
                     })?;
                 Ok(Expr::list(items))
+            } else if parser.peek_token() == &Token::LDelim("{") {
+                let items = parser.parse_object_literal()?;
+                Ok(Expr::object(items))
             } else if is_prefix_op(parser.peek_token(), &parser.ctx) {
                 let operator = parser.parse_operator(OpKind::Prefix, /*is_decl=*/ false)?;
                 parser.consume_any(Token::Space);
@@ -878,6 +986,46 @@ impl<'a> Parser<'a> {
             } else {
                 Err(SyntaxError::new("expected expression", parser.position()).into())
             }
+        })
+    }
+
+    // object_expr ::= '{' (_ <string> _ ':' _ <expr> _) ** ',' [','] '}'
+    fn parse_object_literal(&mut self) -> ParseResult<ListNode<ObjectField>> {
+        self.span_and_trace("parse_object_literal", |parser| {
+            let (_, lspan) = parser.expect(Token::LDelim("{"), "expected '{'")?;
+            parser.consume_space(true);
+
+            let mut fields = vec![];
+            if parser.peek_token() != &Token::RDelim("}") {
+                loop {
+                    parser.consume_space(true);
+                    let key = parser.parse_string()?;
+                    parser.consume_space(true);
+                    parser.expect(Token::Colon, "expected ':'")?;
+                    parser.consume_space(true);
+                    let value = parser.parse_expr(isize::MIN)?;
+                    let span = key.span().union_with(value.span());
+                    fields.push(ObjectField::new(key, value).with_span(span));
+                    parser.consume_space(true);
+
+                    if parser.peek_token() == &Token::Comma {
+                        parser.next_token()?;
+                        parser.consume_space(true);
+
+                        // Allow trailing comma
+                        if parser.peek_token() == &Token::RDelim("}") {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            let (_, rspan) = parser.expect(Token::RDelim("}"), "expected '}'")?;
+            Ok(ListNode::new(fields)
+                .with_span(SourceSpan::new(parser.source_id, lspan.start, rspan.end))
+                .with_delims(("{", lspan.start_pos()), ("}", rspan.end_pos())))
         })
     }
 
@@ -1047,7 +1195,7 @@ impl<'a> Parser<'a> {
 
     // type ::= '&' _ <type>
     //        | '(' (_ <type> _) ++ ',' ')'
-    //        | 'any' | 'bool' | 'int' | 'float' | 'num' | 'str' | 'list' | 'unit' | 'type'
+    //        | 'any' | 'bool' | 'int' | 'float' | 'num' | 'str' | 'list' | 'object' | 'unit' | 'type'
     //        | 'tuple' _ '[' (_ <type> _) ++ ',' ']'
     fn parse_type(&mut self) -> ParseResult<Ty> {
         self.span_and_trace("parse_type", |parser| {
@@ -1069,6 +1217,7 @@ impl<'a> Parser<'a> {
                     parser.expect_map("expected type", |t| match t {
                         Token::Identifier(raw) => Some(raw.clone()),
                         Token::Keyword(Keyword::Unit) => Some("unit".into()),
+                        Token::Keyword(Keyword::Fn) => Some("fn".into()),
                         _ => None,
                     })
                 })?;
@@ -1080,9 +1229,12 @@ impl<'a> Parser<'a> {
                     "float" => Ty::float(),
                     "num" => Ty::num(),
                     "str" => Ty::str(),
+                    "fn" => Ty::function(),
+                    "io" => Ty::io(),
                     "unit" => Ty::unit(),
                     "type" => Ty::ty(),
                     "list" => Ty::list(),
+                    "object" => Ty::object(),
                     "tuple" => {
                         parser.consume_any(Token::Space);
                         let types = parser.parse_list_one_or_more(
@@ -1108,6 +1260,31 @@ impl<'a> Parser<'a> {
     fn parse_operator(&mut self, kind: OpKind, is_decl: bool) -> ParseResult<Operator> {
         self.span_and_trace(&format!("parse_operator<{:?}>", kind), |parser| {
             parser.trace_debug(format!("parsing operator [is_decl={}]", is_decl));
+
+            // Special-case bracketed index operator name: "[]"
+            if kind == OpKind::Infix && parser.peek_token() == &Token::LDelim("[") {
+                let (_, lspan) = parser.next_token()?;
+                let (_, rspan) = parser.expect(Token::RDelim("]"), "expected ']'")?;
+                let span = SourceSpan::new(parser.source_id, lspan.start, rspan.end);
+                let op = Operator::new(Ustr::from("[]"), kind).with_span(span);
+
+                if !is_decl {
+                    // Ensure the operator was previously declared before allowing use.
+                    if parser
+                        .ctx
+                        .operators
+                        .get(kind, Ustr::from("[]"))
+                        .is_none()
+                    {
+                        return Err(
+                            SyntaxError::new("undefined operator: []", parser.position()).into()
+                        );
+                    }
+                }
+
+                return Ok(op);
+            }
+
             // operators are kept ambiguous during lexing therefore a single 'real' operator
             // may be formed by combining multiple single operator tokens. this is handled
             // according to the context which contains a record of all registered operators
@@ -1479,4 +1656,12 @@ fn is_infix_op(op: &Token, ctx: &rt::Module) -> bool {
 
 fn is_unit_suffix(suffix: &Token, ctx: &rt::Module) -> bool {
     matches!(suffix, &Token::Identifier(suffix) if ctx.units.resolve_suffix(suffix).is_some())
+}
+
+fn is_index_op(op: &Token, ctx: &rt::Module) -> bool {
+    op == &Token::LDelim("[")
+        && ctx
+            .operators
+            .get(OpKind::Infix, Ustr::from("[]"))
+            .is_some()
 }

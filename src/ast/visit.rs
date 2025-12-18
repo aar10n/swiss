@@ -336,6 +336,20 @@ impl Visit for Expr {
                 op.visit(visitor)?;
                 expr.visit(visitor)?;
             }
+            ExprKind::IndexAssign(base, idx, value) => {
+                base.visit(visitor)?;
+                idx.visit(visitor)?;
+                value.visit(visitor)?;
+            }
+            ExprKind::Slice(container, start, stop) => {
+                container.visit(visitor)?;
+                if let Some(start) = start {
+                    start.visit(visitor)?;
+                }
+                if let Some(stop) = stop {
+                    stop.visit(visitor)?;
+                }
+            }
             ExprKind::UnitCast(expr, unit) => {
                 expr.visit(visitor)?;
                 unit.visit(visitor)?;
@@ -360,6 +374,11 @@ impl Visit for Expr {
             }
             ExprKind::List(list) => {
                 visitor.visit_list(list)?;
+            }
+            ExprKind::Object(object) => {
+                for field in object.iter_mut() {
+                    field.value.visit(visitor)?;
+                }
             }
             ExprKind::Tuple(tuple) => {
                 visitor.visit_tuple(tuple)?;

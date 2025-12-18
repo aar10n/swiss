@@ -34,6 +34,12 @@ impl Exception {
     }
 }
 
+impl std::fmt::Display for Exception {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.kind, self.message)
+    }
+}
+
 impl IntoErrorCtx<Context> for Exception {
     fn into_error_ctx(self, ctx: &Context) -> Error {
         let mut err = Error::new(

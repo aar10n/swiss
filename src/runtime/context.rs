@@ -22,6 +22,14 @@ pub struct Context {
     pub sources: SourceMap,
     pub modules: ModuleMap,
 
+    // Captured output from formatters. When set, the driver will prefer printing
+    // this buffer over the raw value display.
+    pub pending_output: Option<String>,
+    pub default_formatter: Option<Ustr>,
+    // Last evaluated expression value (used as a fallback when interpretation
+    // returns None).
+    pub last_value: Option<Value>,
+
     active_module: Option<ModuleId>,
     call_stack: Vec<StackFrame>,
     local_scopes: Vec<LocalScope>,
@@ -33,6 +41,10 @@ impl Context {
             config: RuntimeConfig::default(),
             sources: SourceMap::new(),
             modules: ModuleMap::new(),
+
+            pending_output: None,
+            default_formatter: None,
+            last_value: None,
 
             active_module: None,
             call_stack: Vec::new(),
@@ -47,6 +59,26 @@ impl Context {
     pub fn active_module_mut(&mut self) -> Option<&mut Module> {
         self.active_module
             .map(|module_id| &mut self.modules[module_id])
+    }
+
+    pub fn take_pending_output(&mut self) -> Option<String> {
+        self.pending_output.take()
+    }
+
+    pub fn set_pending_output(&mut self, output: String) {
+        self.pending_output = Some(output);
+    }
+
+    pub fn take_last_value(&mut self) -> Option<Value> {
+        self.last_value.take()
+    }
+
+    pub fn set_last_value(&mut self, value: Value) {
+        self.last_value = Some(value);
+    }
+
+    pub fn set_default_formatter(&mut self, name: Ustr) {
+        self.default_formatter = Some(name);
     }
 
     pub fn backtrace(&self) -> Vec<StackFrame> {
@@ -158,9 +190,16 @@ impl Context {
             self.modules.get_module(path.dir_parts())?
         };
 
-        match module.resolve_constant(name) {
+        match module.resolve_constant(name.clone()) {
             Ok(c) => Ok(c.value.clone()),
-            Err(err) => Err(err),
+            Err(_) => {
+                // Allow functions to be treated as first-class values when referenced in expression position.
+                if let Ok(func) = module.resolve_function(name.clone()) {
+                    Ok(ValueRef::new_const(Value::Function(func.clone())))
+                } else {
+                    Err(NameError::new("undefined", name.to_string_inner()))
+                }
+            }
         }
     }
 
