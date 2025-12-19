@@ -73,7 +73,6 @@ impl<'ctx> Interpreter<'ctx> {
         }
     }
 
-
     pub fn active_module(&mut self) -> &mut rt::Module {
         self.ctx.active_module_mut().unwrap()
     }
@@ -249,26 +248,72 @@ impl<'ctx> Interpreter<'ctx> {
                 let vref = Interp::<ValueRef>::eval(arg, self)?;
                 values.push(vref.into_value());
             } else if ty == rt::Ty::Unit {
-                // special handling for unit type parameters
-                // extract the identifier directly without evaluating it as an expression
-                let unit_name = match &arg.kind {
-                    ExprKind::Ident(ident) => ident.raw,
-                    ExprKind::Path(path) if path.parts.len() == 1 => path.parts[0].raw,
-                    _ => {
-                        // if it's not a simple identifier, give a better error message
-                        return Err(TypeError::mismatch(
-                            "unit".to_string(),
-                            call_site.into_spanned(match &arg.kind {
-                                ExprKind::Number(_) => "number".to_string(),
-                                ExprKind::String(_) => "string".to_string(),
-                                ExprKind::Boolean(_) => "boolean".to_string(),
-                                _ => "expression".to_string(),
-                            }),
-                        )
-                        .into());
+                // Allow either bare unit identifiers (e.g. `ms`) or any expression that
+                // evaluates to a unit value (e.g. a variable holding a unit).
+                let val = match &arg.kind {
+                    // For a simple identifier/path, prefer a bound variable/constant if it exists;
+                    // otherwise treat it as a unit literal for backwards compatibility.
+                    ExprKind::Ident(ident) => {
+                        if let Some(vref) = self
+                            .ctx
+                            .local_scopes()
+                            .iter()
+                            .rev()
+                            .find_map(|scope| scope.get(ident.raw))
+                        {
+                            vref.get()
+                        } else if let Ok(constant) = self
+                            .ctx
+                            .active_module()
+                            .unwrap()
+                            .resolve_constant(ident.as_spanned_ustr())
+                        {
+                            constant.value.get()
+                        } else {
+                            Value::Unit(ident.raw)
+                        }
+                    }
+                    ExprKind::Path(path) if path.parts.len() == 1 => {
+                        let ident = &path.parts[0];
+                        if let Some(vref) = self
+                            .ctx
+                            .local_scopes()
+                            .iter()
+                            .rev()
+                            .find_map(|scope| scope.get(ident.raw))
+                        {
+                            vref.get()
+                        } else if let Ok(constant) = self
+                            .ctx
+                            .active_module()
+                            .unwrap()
+                            .resolve_constant(ident.as_spanned_ustr())
+                        {
+                            constant.value.get()
+                        } else {
+                            Value::Unit(ident.raw)
+                        }
+                    }
+                    _ => Interp::<Value>::eval(arg, self)?,
+                };
+
+                // Ensure the argument is a unit value.
+                let unit_value = match val {
+                    Value::Unit(u) => Value::Unit(u),
+                    Value::Ref(r) => match r.borrow().clone() {
+                        Value::Unit(u) => Value::Unit(u),
+                        other => {
+                            let u = rt::CastInto::<ustr::Ustr>::cast(self.ctx, other)?;
+                            Value::Unit(u)
+                        }
+                    },
+                    other => {
+                        let u = rt::CastInto::<ustr::Ustr>::cast(self.ctx, other)?;
+                        Value::Unit(u)
                     }
                 };
-                values.push(Value::Unit(unit_name));
+
+                values.push(unit_value);
             } else {
                 let val = Interp::<Value>::eval(arg, self)?;
                 values.push(rt::coerce::to_ty(self.ctx, val, ty));
@@ -408,8 +453,7 @@ impl<'ctx> Interpreter<'ctx> {
             return Err(InterpError::TypeError(TypeError {
                 expected: Some(format!(
                     "function {} expects at least {} argument(s)",
-                    f.name.raw,
-                    expected_fixed_args,
+                    f.name.raw, expected_fixed_args,
                 )),
                 found: call_site.into_spanned(format!("found {}", values.len())),
                 context: None,
@@ -428,14 +472,13 @@ impl<'ctx> Interpreter<'ctx> {
                 break;
             }
 
-            let mut v = values
-                .get(i)
-                .cloned()
-                .ok_or_else(|| InterpError::TypeError(TypeError {
+            let mut v = values.get(i).cloned().ok_or_else(|| {
+                InterpError::TypeError(TypeError {
                     expected: Some(format!("function {} expects argument", f.name.raw)),
                     found: call_site.into_spanned("missing argument".to_string()),
                     context: None,
-                }))?;
+                })
+            })?;
 
             let ty = param.ty.clone().map_or(rt::Ty::Any, |ty| ty.raw);
             if ty.is_ref() {
@@ -455,7 +498,9 @@ impl<'ctx> Interpreter<'ctx> {
         }
 
         let result = match &f.kind {
-            FunctionKind::Native(builtin) => builtin(self.ctx, coerced_values).map_err(InterpError::from),
+            FunctionKind::Native(builtin) => {
+                builtin(self.ctx, coerced_values).map_err(InterpError::from)
+            }
             FunctionKind::Source(body) => {
                 let frame = StackFrame::new(f.name.clone(), call_site);
                 let scope = LocalScope::from(
@@ -490,8 +535,9 @@ pub fn call_function(
         Ok(v) => Ok(v),
         Err(InterpError::Return(v)) => Ok(v),
         Err(InterpError::Exception(e)) => Err(e),
-        Err(other) => Err(Exception::new("RuntimeError", other.to_string())
-            .with_backtrace(ctx.backtrace())),
+        Err(other) => {
+            Err(Exception::new("RuntimeError", other.to_string()).with_backtrace(ctx.backtrace()))
+        }
     }
 }
 
@@ -966,94 +1012,94 @@ impl<'ctx> Interp<'ctx, LRValue> for Expr {
                     }
                     Ok(LRValue::R(value))
                 }
-            ExprKind::InfixOp(op, lhs, rhs) => {
-                let func = op.eval(intrp)?;
-                let args = ListNode::from(vec![*lhs.clone(), *rhs.clone()]);
-                Ok(LRValue::R(intrp.invoke(&func, args, op.span())?))
-            }
-            ExprKind::IndexAssign(container, index, value) => {
-                // Evaluate container and index refs (container must be mutable for list/object)
-                let container_ref = Interp::<ValueRef>::eval(container, intrp)?;
-                let idx_val = Interp::<Value>::eval(index, intrp)?;
-                let new_val = Interp::<Value>::eval(value, intrp)?;
+                ExprKind::InfixOp(op, lhs, rhs) => {
+                    let func = op.eval(intrp)?;
+                    let args = ListNode::from(vec![*lhs.clone(), *rhs.clone()]);
+                    Ok(LRValue::R(intrp.invoke(&func, args, op.span())?))
+                }
+                ExprKind::IndexAssign(container, index, value) => {
+                    // Evaluate container and index refs (container must be mutable for list/object)
+                    let container_ref = Interp::<ValueRef>::eval(container, intrp)?;
+                    let idx_val = Interp::<Value>::eval(index, intrp)?;
+                    let new_val = Interp::<Value>::eval(value, intrp)?;
 
-                let mut container_mut = container_ref.borrow_mut();
-                match &mut *container_mut {
-                    Value::List(list) => {
-                        let idx_usize = match idx_val {
-                            Value::Quantity(q) if q.is_dimless() => q
-                                .number
-                                .into_int(intrp.ctx)
-                                .map_err(InterpError::from)?
-                                .to_usize()
-                                .ok_or_else(|| {
-                                    InterpError::Exception(Exception::new(
-                                        "IndexError",
-                                        "index must be non-negative".to_string(),
+                    let mut container_mut = container_ref.borrow_mut();
+                    match &mut *container_mut {
+                        Value::List(list) => {
+                            let idx_usize = match idx_val {
+                                Value::Quantity(q) if q.is_dimless() => q
+                                    .number
+                                    .into_int(intrp.ctx)
+                                    .map_err(InterpError::from)?
+                                    .to_usize()
+                                    .ok_or_else(|| {
+                                        InterpError::Exception(Exception::new(
+                                            "IndexError",
+                                            "index must be non-negative".to_string(),
+                                        )
+                                        .with_backtrace(intrp.ctx.backtrace()))
+                                    })?,
+                                _ => {
+                                    return Err(InterpError::Exception(Exception::new(
+                                        "TypeError",
+                                        "list index must be an integer".to_string(),
                                     )
-                                    .with_backtrace(intrp.ctx.backtrace()))
-                                })?,
-                            _ => {
-                                return Err(InterpError::Exception(Exception::new(
-                                    "TypeError",
-                                    "list index must be an integer".to_string(),
-                                )
-                                .with_backtrace(intrp.ctx.backtrace())));
-                            }
-                        };
+                                    .with_backtrace(intrp.ctx.backtrace())));
+                                }
+                            };
 
-                        let mut vec_ref = list.borrow_mut();
-                        if idx_usize >= vec_ref.len() {
-                            return Err(InterpError::Exception(
-                                Exception::new(
-                                    "IndexError",
-                                    format!("list index out of range: {}", idx_usize),
-                                )
-                                .with_backtrace(intrp.ctx.backtrace()),
-                            ));
-                        }
-                        vec_ref[idx_usize] = new_val;
-                        Ok(LRValue::R(Value::Empty))
-                    }
-                    Value::Object(object) => {
-                        let key = match idx_val {
-                            Value::String(s) => s,
-                            _ => {
+                            let mut vec_ref = list.borrow_mut();
+                            if idx_usize >= vec_ref.len() {
                                 return Err(InterpError::Exception(
                                     Exception::new(
-                                        "TypeError",
-                                        "object indices must be strings".to_string(),
+                                        "IndexError",
+                                        format!("list index out of range: {}", idx_usize),
                                     )
                                     .with_backtrace(intrp.ctx.backtrace()),
                                 ));
                             }
-                        };
-
-                        let key_ustr = Ustr::from(&key);
-                        let mut fields = object.borrow_mut();
-                        if let Some((_, val)) = fields.iter_mut().find(|(k, _)| *k == key_ustr) {
-                            *val = new_val;
-                        } else {
-                            fields.push((key_ustr, new_val));
+                            vec_ref[idx_usize] = new_val;
+                            Ok(LRValue::R(Value::Empty))
                         }
-                        Ok(LRValue::R(Value::Empty))
-                    }
-                    Value::Tuple(_) => Err(InterpError::Exception(
-                        Exception::new("TypeError", "cannot assign into tuple".to_string())
+                        Value::Object(object) => {
+                            let key = match idx_val {
+                                Value::String(s) => s,
+                                _ => {
+                                    return Err(InterpError::Exception(
+                                        Exception::new(
+                                            "TypeError",
+                                            "object indices must be strings".to_string(),
+                                        )
+                                        .with_backtrace(intrp.ctx.backtrace()),
+                                    ));
+                                }
+                            };
+
+                            let key_ustr = Ustr::from(&key);
+                            let mut fields = object.borrow_mut();
+                            if let Some((_, val)) = fields.iter_mut().find(|(k, _)| *k == key_ustr) {
+                                *val = new_val;
+                            } else {
+                                fields.push((key_ustr, new_val));
+                            }
+                            Ok(LRValue::R(Value::Empty))
+                        }
+                        Value::Tuple(_) => Err(InterpError::Exception(
+                            Exception::new("TypeError", "cannot assign into tuple".to_string())
+                                .with_backtrace(intrp.ctx.backtrace()),
+                        )),
+                        other => Err(InterpError::Exception(
+                            Exception::new(
+                                "TypeError",
+                                format!(
+                                    "cannot assign to index of type: {}",
+                                    other.ty().pretty_string(intrp.ctx)
+                                ),
+                            )
                             .with_backtrace(intrp.ctx.backtrace()),
-                    )),
-                    other => Err(InterpError::Exception(
-                        Exception::new(
-                            "TypeError",
-                            format!(
-                                "cannot assign to index of type: {}",
-                                other.ty().pretty_string(intrp.ctx)
-                            ),
-                        )
-                        .with_backtrace(intrp.ctx.backtrace()),
-                    )),
+                        )),
+                    }
                 }
-            }
                 ExprKind::PrefixOp(op, expr) => {
                     let func = op.eval(intrp)?;
                     let args = ListNode::from(vec![*expr.clone()]);
@@ -1216,13 +1262,19 @@ fn value_to_isize(ctx: &mut Context, value: Value) -> Result<isize, Exception> {
         Value::Quantity(q) if q.is_dimless() => {
             let int = q.number.into_int(ctx)?;
             int.to_isize().ok_or_else(|| {
-                Exception::new("IndexError", "index must be non-negative and in range".to_string())
-                    .with_backtrace(ctx.backtrace())
+                Exception::new(
+                    "IndexError",
+                    "index must be non-negative and in range".to_string(),
+                )
+                .with_backtrace(ctx.backtrace())
             })
         }
         other => Err(Exception::new(
             "TypeError",
-            format!("slice indices must be integers, found {}", other.ty().pretty_string(ctx)),
+            format!(
+                "slice indices must be integers, found {}",
+                other.ty().pretty_string(ctx)
+            ),
         )
         .with_backtrace(ctx.backtrace())),
     }
@@ -1249,7 +1301,9 @@ fn apply_slice(
             let len = items.len();
             let slicer = move |start, stop| {
                 let slice = items[start..stop].to_vec();
-                Value::Tuple(SmallVec::from_vec(slice.into_iter().map(Box::new).collect()))
+                Value::Tuple(SmallVec::from_vec(
+                    slice.into_iter().map(Box::new).collect(),
+                ))
             };
             (len, Box::new(slicer))
         }
@@ -1263,14 +1317,13 @@ fn apply_slice(
             (len, Box::new(slicer))
         }
         other => {
-            return Err(InterpError::from(Exception::new(
-                "TypeError",
-                format!(
-                    "cannot slice type: {}",
-                    other.ty().pretty_string(ctx)
-                ),
-            )
-            .with_backtrace(ctx.backtrace())))
+            return Err(InterpError::from(
+                Exception::new(
+                    "TypeError",
+                    format!("cannot slice type: {}", other.ty().pretty_string(ctx)),
+                )
+                .with_backtrace(ctx.backtrace()),
+            ))
         }
     };
 

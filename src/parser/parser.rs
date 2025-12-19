@@ -1041,13 +1041,17 @@ impl<'a> Parser<'a> {
             parser.consume_any(Token::Space);
 
             while parser.peek_token() != &Token::RDelim("}") {
-                parser.consume_any(Token::Space);
-                if !stmts.is_empty() {
-                    parser.expect(Token::NewLine, "expected newline")?;
+                // Allow one or more newlines (with optional spaces) between statements.
+                let mut saw_newline = false;
+                while parser.consume_one(Token::NewLine).is_some() {
+                    saw_newline = true;
                     parser.consume_any(Token::Space);
-                    if parser.peek_token() == &Token::RDelim("}") {
-                        break;
-                    }
+                }
+                if !saw_newline {
+                    return Err(SyntaxError::new("expected newline", parser.position()).into());
+                }
+                if parser.peek_token() == &Token::RDelim("}") {
+                    break;
                 }
 
                 stmts.push(parser.parse_stmt()?);

@@ -1,5 +1,6 @@
 use super::exception::StackFrame;
 use super::module::{Module, ModuleId, ModuleMap};
+use super::encoding::EncodingRegistry;
 use super::operator::{OpAssoc, OpKind, Operator, OperatorTable};
 use super::path::{PathLike, PathTree};
 use super::unit::{Unit, UnitKind, UnitTable};
@@ -29,6 +30,7 @@ pub struct Context {
     // Last evaluated expression value (used as a fallback when interpretation
     // returns None).
     pub last_value: Option<Value>,
+    pub encodings: EncodingRegistry,
 
     active_module: Option<ModuleId>,
     call_stack: Vec<StackFrame>,
@@ -45,6 +47,7 @@ impl Context {
             pending_output: None,
             default_formatter: None,
             last_value: None,
+            encodings: EncodingRegistry::new(),
 
             active_module: None,
             call_stack: Vec::new(),

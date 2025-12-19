@@ -62,6 +62,7 @@ infix operator (^)(num,num) = builtin::pow
 #[precedence=10]
 infix operator ([])(any,any) = builtin::index
 infix operator (->)(num,unit) = builtin::unit_cast
+
 ;
 ; Dimensions and Units
 ;
@@ -231,8 +232,12 @@ unit tebibyte{TiB} [Data] = 1099511627776
 fn fmt_stdout(v: any, io) {
   builtin::write(io, v)
 }
-
 #[default_formatter=fmt_stdout]
+
+fn json_encode(value) { builtin::json_encode(value) }
+fn json_decode(text) { builtin::json_decode(text) }
+
+builtin::register_encoding("json", json_encode, json_decode)
 
 ;
 ; Constants
@@ -251,6 +256,9 @@ fn print(v...) { builtin::print(v...) }
 fn reverse(v: any) { builtin::reverse(v) }
 fn delete(obj: object, key: str) { builtin::delete(obj, key) }
 fn append(list: list, item: any) { builtin::append(list, item) }
+
+fn encode(name, value) { builtin::encode(name, value) }
+fn decode(name, text) { builtin::decode(name, text) }
 
 fn abs(x: num) { if x < 0 { -x } else { x } }
 fn sign(x: num) { if x < 0 { -1 } else { if x > 0 { 1 } else { 0 } } }

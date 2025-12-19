@@ -1,5 +1,5 @@
-use crate::runtime::{Context, Exception, Module, Conversion, Dim, Quantity, Ty, Value, ValueRef};
 use crate::print::PrettyString;
+use crate::runtime::{Context, Conversion, Dim, Exception, Module, Quantity, Ty, Value, ValueRef};
 use ustr::Ustr;
 
 pub(super) fn register(module: &mut Module) {
@@ -16,8 +16,9 @@ pub(super) fn register(module: &mut Module) {
                     if let Some(unit) = q.get_unit() {
                         Ok(Value::Unit(unit))
                     } else {
-                        Err(Exception::new("ValueError", "value has no unit".to_string())
-                            .with_backtrace(ctx.backtrace()))
+                        Ok(Value::Empty)
+                        // Err(Exception::new("ValueError", "value has no unit".to_string())
+                        //     .with_backtrace(ctx.backtrace()))
                     }
                 }
                 Value::Unit(u) => Ok(Value::Unit(u)),
@@ -28,13 +29,18 @@ pub(super) fn register(module: &mut Module) {
                         if let Some(unit) = q.get_unit() {
                             Ok(Value::Unit(unit))
                         } else {
-                            Err(Exception::new("ValueError", "value has no unit".to_string())
-                                .with_backtrace(ctx.backtrace()))
+                            Err(
+                                Exception::new("ValueError", "value has no unit".to_string())
+                                    .with_backtrace(ctx.backtrace()),
+                            )
                         }
                     } else {
                         Err(Exception::new(
                             "TypeError",
-                            format!("expected value with unit, got {}", inner.ty().pretty_string(&ctx)),
+                            format!(
+                                "expected value with unit, got {}",
+                                inner.ty().pretty_string(&ctx)
+                            ),
                         )
                         .with_backtrace(ctx.backtrace()))
                     }
@@ -51,20 +57,24 @@ pub(super) fn register(module: &mut Module) {
         }))
         .with_function(builtin_fn_v2!("conversions", |&ctx, unit: unit| {
             let module = ctx.active_module().unwrap();
-            let resolved_unit = module
-                .units
-                .resolve_suffix(unit)
-                .ok_or_else(|| Exception::new("NameError", format!("unknown unit: {}", unit))
-                    .with_backtrace(ctx.backtrace()))?;
+            let resolved_unit = module.units.resolve_suffix(unit).ok_or_else(|| {
+                Exception::new("NameError", format!("unknown unit: {}", unit))
+                    .with_backtrace(ctx.backtrace())
+            })?;
 
             let compatible = module
                 .conversion_graph
                 .get_compatible_units(resolved_unit.name.raw)
-                .ok_or_else(|| Exception::new(
-                    "ValueError",
-                    format!("no conversions available for unit {}", resolved_unit.name.raw),
-                )
-                .with_backtrace(ctx.backtrace()))?;
+                .ok_or_else(|| {
+                    Exception::new(
+                        "ValueError",
+                        format!(
+                            "no conversions available for unit {}",
+                            resolved_unit.name.raw
+                        ),
+                    )
+                    .with_backtrace(ctx.backtrace())
+                })?;
 
             let units = compatible
                 .iter()
@@ -76,12 +86,10 @@ pub(super) fn register(module: &mut Module) {
         }))
         .with_function(builtin_fn_v2!("unit_name", |&ctx, unit: unit| {
             let module = ctx.active_module().unwrap();
-            let resolved = module
-                .units
-                .resolve_suffix(unit)
-                .cloned()
-                .ok_or_else(|| Exception::new("NameError", format!("unknown unit: {}", unit))
-                    .with_backtrace(ctx.backtrace()))?;
+            let resolved = module.units.resolve_suffix(unit).cloned().ok_or_else(|| {
+                Exception::new("NameError", format!("unknown unit: {}", unit))
+                    .with_backtrace(ctx.backtrace())
+            })?;
 
             let display = match &resolved.conversion {
                 Conversion::Impl(unit_impl) => unit_impl
@@ -112,7 +120,9 @@ pub(super) fn register(module: &mut Module) {
 
                 // Get base unit if needed (when source_unit is None)
                 let base_unit_opt = if source_unit.is_none() {
-                    active_module.conversion_graph.get_base_unit(&target_dim.expr)
+                    active_module
+                        .conversion_graph
+                        .get_base_unit(&target_dim.expr)
                 } else {
                     None
                 };
@@ -120,7 +130,13 @@ pub(super) fn register(module: &mut Module) {
                 // Clone conversion graph to avoid borrow checker issues
                 let conv_graph = active_module.conversion_graph.clone();
 
-                (target_name, target_dim, source_unit, base_unit_opt, conv_graph)
+                (
+                    target_name,
+                    target_dim,
+                    source_unit,
+                    base_unit_opt,
+                    conv_graph,
+                )
             };
 
             // Use conversion graph for efficient direct conversion
@@ -130,21 +146,29 @@ pub(super) fn register(module: &mut Module) {
                     v.number.clone()
                 } else {
                     // Use conversion graph to convert directly from source to target
-                    conv_graph.convert(ctx, v.number.clone(), source_unit, target_name)
+                    conv_graph
+                        .convert(ctx, v.number.clone(), source_unit, target_name)
                         .map_err(|e| Exception::new("ValueError", e.to_string()))?
                 }
             } else {
                 // No source unit specified - treat as base unit
-                let base_unit = base_unit_opt
-                    .ok_or_else(|| Exception::new("ValueError",
-                        format!("no base unit found for dimension {}", target_dim.pretty_string(ctx))))?;
+                let base_unit = base_unit_opt.ok_or_else(|| {
+                    Exception::new(
+                        "ValueError",
+                        format!(
+                            "no base unit found for dimension {}",
+                            target_dim.pretty_string(ctx)
+                        ),
+                    )
+                })?;
 
                 if base_unit == target_name {
                     // Already at target
                     v.number.clone()
                 } else {
                     // Convert from base to target
-                    conv_graph.convert(ctx, v.number.clone(), base_unit, target_name)
+                    conv_graph
+                        .convert(ctx, v.number.clone(), base_unit, target_name)
                         .map_err(|e| Exception::new("ValueError", e.to_string()))?
                 }
             };

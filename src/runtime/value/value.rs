@@ -82,7 +82,7 @@ impl Value {
             Value::Io(_) => false,
             Value::Unit(_) => false,
             Value::Ty(_) => false,
-            Value::Empty => false,
+            Value::Empty => true,
         }
     }
 

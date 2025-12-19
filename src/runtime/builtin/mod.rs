@@ -203,6 +203,7 @@ mod math;
 mod collections;
 mod units;
 mod io;
+mod encoding;
 
 pub(crate) use helpers::{take_arg, take_varargs};
 
@@ -217,4 +218,5 @@ pub fn register_builtin_module(ctx: &mut Context) {
     helpers::register(module);
     units::register(module);
     io::register(module);
+    encoding::register(module);
 }
