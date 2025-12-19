@@ -1,0 +1,59 @@
+INCLUDE: prelude.ch
+
+; Test that required functions must be present
+TEST: Missing required to_base function
+INPUT: {
+  dimension TestDim1
+  base unit testunit1{tu1} = TestDim1
+  unit derived1{d1} [TestDim1] = {
+    fn from_base(x: num) { x * 2 }
+  }
+}
+EXPECT_ERROR: interface 'UnitImpl' requires function 'to_base' to be implemented
+
+TEST: Missing required from_base function
+INPUT: {
+  dimension TestDim2
+  base unit testunit2{tu2} = TestDim2
+  unit derived2{d2} [TestDim2] = {
+    fn to_base(x: num) { x / 2 }
+  }
+}
+EXPECT_ERROR: interface 'UnitImpl' requires function 'from_base' to be implemented
+
+; Test that extra functions not in interface are rejected
+TEST: Extra function not in interface
+INPUT: {
+  dimension TestDim5
+  base unit testunit5{tu5} = TestDim5
+  unit derived5{d5} [TestDim5] = {
+    fn to_base(x: num) { x / 2 }
+    fn from_base(x: num) { x * 2 }
+    fn extra_function() { "not allowed" }
+  }
+}
+EXPECT_ERROR: interface 'UnitImpl' does not expect a function named 'extra_function'
+
+; Test that function signatures are validated
+TEST: Invalid to_base signature - too many parameters
+INPUT: {
+  dimension TestDim6
+  base unit testunit6{tu6} = TestDim6
+  unit derived6{d6} [TestDim6] = {
+    fn to_base(x: num, y: num) { x / 2 }
+    fn from_base(x: num) { x * 2 }
+  }
+}
+EXPECT_ERROR: function 'to_base' expects 1 parameter(s), got 2
+
+TEST: Invalid display_name signature - takes parameter when it shouldn't
+INPUT: {
+  dimension TestDim7
+  base unit testunit7{tu7} = TestDim7
+  unit derived7{d7} [TestDim7] = {
+    fn to_base(x: num) { x / 2 }
+    fn from_base(x: num) { x * 2 }
+    fn display_name(x: num) { "wrong" }
+  }
+}
+EXPECT_ERROR: function 'display_name' expects 0 parameter(s), got 1

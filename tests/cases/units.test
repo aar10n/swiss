@@ -1,0 +1,123 @@
+INCLUDE: prelude.ch
+
+// Unit quantities
+TEST: Seconds
+INPUT: 1s
+EXPECT: 1 second
+
+TEST: Minutes
+INPUT: 1min
+EXPECT: 1 minute
+
+TEST: Hours
+INPUT: 1h
+EXPECT: 1 hour
+
+TEST: Meters
+INPUT: 1m
+EXPECT: 1 meter
+
+TEST: Kilograms
+INPUT: 1kg
+EXPECT: 1 kilogram
+
+// Unit conversion
+TEST: Seconds to minutes
+INPUT: 60s -> min
+EXPECT: 1 minute
+
+TEST: Seconds to minutes
+INPUT: 30s -> min
+EXPECT: 0.5 minute
+
+TEST: Minutes to seconds
+INPUT: 1.5min -> s
+EXPECT: 90 second
+
+TEST: Hours to seconds
+INPUT: 1h -> s
+EXPECT: 3600 second
+
+TEST: Kilograms to grams
+INPUT: 1kg -> g
+EXPECT: 1000 gram
+
+TEST: Invalid unit conversion
+INPUT: 60s -> m
+EXPECT_ERROR: Exception: dimension mismatch: second != meter
+
+// Units with special characters
+TEST: Celsius unit with special character
+INPUT: 25°C
+EXPECT: 25 °C
+
+TEST: Fahrenheit unit with special character
+INPUT: 77°F
+EXPECT: 77 °F
+
+TEST: Ohm unit with special character
+INPUT: 100Ω
+EXPECT: 100 ohm
+
+TEST: Microfarad with special character
+INPUT: 10μF
+EXPECT: 10 microfarad
+
+TEST: Microampere with special character
+INPUT: 5μA
+EXPECT: 5 microampere
+
+// Custom conversion implementations with custom display names
+TEST: Celsius to Fahrenheit conversion
+INPUT: 0°C -> °F
+EXPECT: 32 °F
+
+TEST: Fahrenheit to Celsius conversion
+INPUT: 32°F -> °C
+EXPECT: 0 °C
+
+TEST: Water boiling point conversion
+INPUT: 100°C -> °F
+EXPECT: 212 °F
+
+TEST: Room temperature conversion
+INPUT: 72°F -> °C
+EXPECT: 22.22222222222223 °C
+
+TEST: Temperature to base unit (Kelvin)
+INPUT: 0°C -> K
+EXPECT: 273.15 kelvin
+
+TEST: Kelvin to Celsius
+INPUT: 273.15K -> °C
+EXPECT: 0 °C
+
+TEST: Kelvin to Fahrenheit
+INPUT: 273.15K -> °F
+EXPECT: 32 °F
+
+// Test custom display_name function is used
+TEST: Celsius custom display name
+INPUT: 100°C
+EXPECT: 100 °C
+
+TEST: Fahrenheit custom display name
+INPUT: 212°F
+EXPECT: 212 °F
+
+// Affine unit arithmetic (fixed with delayed conversion)
+TEST: Negative Celsius temperature
+INPUT: (-40)°C
+EXPECT: -40 °C
+
+TEST: Negative Celsius to Fahrenheit
+INPUT: (-40)°C -> °F
+EXPECT: -40 °F
+
+TEST: Celsius addition (same unit)
+INPUT: 10°C + 5°C
+EXPECT: 15 °C
+
+TEST: Fahrenheit subtraction (same unit)
+INPUT: 100°F - 32°F
+EXPECT: 68 °F

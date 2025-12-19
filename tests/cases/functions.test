@@ -1,0 +1,41 @@
+INCLUDE: prelude.ch
+
+TEST: List length
+INPUT: len([1, 2, 3])
+EXPECT: 3
+
+TEST: Tuple length
+INPUT: len((1, 2, 3))
+EXPECT: 3
+
+TEST: String length
+INPUT: len("hello")
+EXPECT: 5
+
+TEST: Invalid length
+INPUT: len(5)
+EXPECT_ERROR: Exception: cannot get length of type: int
+
+TEST: Sum zero
+INPUT: sum()
+EXPECT: 0
+
+TEST: Sum one
+INPUT: sum(1)
+EXPECT: 1
+
+TEST: Sum many
+INPUT: sum(1, 2, 3, 4, 5)
+EXPECT: 15
+
+TEST: Sum splat
+INPUT: sum([1, 2, 3]...)
+EXPECT: 6
+
+TEST: Min multiple
+INPUT: min(5, 2, 8, 1, 9)
+EXPECT: 1
+
+TEST: Max multiple
+INPUT: max(5, 2, 8, 1, 9)
+EXPECT: 9

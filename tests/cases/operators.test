@@ -1,0 +1,55 @@
+INCLUDE: prelude.ch
+
+// Basic operators
+TEST: Addition
+INPUT: 2 + 3
+EXPECT: 5
+
+TEST: Subtraction  
+INPUT: 10 - 4
+EXPECT: 6
+
+TEST: Multiplication
+INPUT: 3 * -7
+EXPECT: -21
+
+TEST: Division
+INPUT: 15 / 3
+EXPECT: 5
+
+TEST: Modulus
+INPUT: 10 % 3
+EXPECT: 1
+
+TEST: Power
+INPUT: 2^3
+EXPECT: 8
+
+TEST: Complex expression
+INPUT: (2 + 3) * 4 - 1
+EXPECT: 19
+
+TEST: Operator precedence
+INPUT: 2 + 3 * 4 - 1
+EXPECT: 13
+
+// Indexing operator
+TEST: List indexing
+INPUT: [10, 20, 30][1]
+EXPECT: 20
+
+TEST: Tuple indexing
+INPUT: (1, 2, 3)[2]
+EXPECT: 3
+
+TEST: List index out of range
+INPUT: [1, 2][5]
+EXPECT_ERROR: Exception: list index out of range: 5
+
+TEST: Tuple index out of range
+INPUT: (1, 2)[3]
+EXPECT_ERROR: Exception: tuple index out of range: 3
+
+TEST: Indexing non-container
+INPUT: 42[0]
+EXPECT_ERROR: Exception: cannot index into type: int

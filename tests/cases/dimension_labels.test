@@ -1,0 +1,107 @@
+INCLUDE: prelude.ch
+
+; ============================================
+; Dimension Label Parsing and Display
+; ============================================
+; Tests that dimension labels (defined with curly braces)
+; are parsed correctly and used in display.
+
+TEST: base time dimension with label
+INPUT: 1s
+EXPECT: 1 second
+
+TEST: base length dimension with label
+INPUT: 1m
+EXPECT: 1 meter
+
+TEST: base mass dimension with label
+INPUT: 1kg
+EXPECT: 1 kilogram
+
+TEST: base current dimension with label
+INPUT: 1I
+EXPECT: 1 ampere
+
+TEST: base temperature dimension with label
+INPUT: 1K
+EXPECT: 1 kelvin
+
+; ============================================
+; Labeled Derived Dimensions
+; ============================================
+
+TEST: voltage dimension with label
+INPUT: 1V
+EXPECT: 1 volt
+
+TEST: resistance dimension with label
+INPUT: 1Ω
+EXPECT: 1 ohm
+
+TEST: capacitance dimension with label
+INPUT: 1F
+EXPECT: 1 farad
+
+TEST: inductance dimension with label
+INPUT: 1H
+EXPECT: 1 henry
+
+TEST: frequency dimension (1/time)
+INPUT: 1Hz
+EXPECT: 1 hertz
+
+; ============================================
+; Special Dimensions with Labels
+; ============================================
+
+TEST: angle dimension with label
+INPUT: 1rad
+EXPECT: 1 radian
+
+TEST: data storage dimension with label
+INPUT: 1B
+EXPECT: 1 byte
+
+; ============================================
+; Compound Units with Labeled Dimensions
+; ============================================
+
+TEST: speed (length/time)
+INPUT: 1m / 1s
+EXPECT: 1 meter / second
+
+TEST: acceleration (length/time^2)
+INPUT: 1m / (1s * 1s)
+EXPECT: 1 meter / second^2
+
+TEST: force (mass * length / time^2)
+INPUT: 1kg * 1m / (1s * 1s)
+EXPECT: 1 kilogram meter / second^2
+
+TEST: energy (mass * length^2 / time^2)
+INPUT: 1kg * 1m * 1m / (1s * 1s)
+EXPECT: 1 kilogram meter^2 / second^2
+
+TEST: power (mass * length^2 / time^3)
+INPUT: 1kg * 1m * 1m / (1s * 1s * 1s)
+EXPECT: 1 kilogram meter^2 / second^3
+
+; ============================================
+; Dimension Label Conversions
+; ============================================
+
+TEST: voltage conversion (millivolts to volts)
+INPUT: 5000mV -> V
+EXPECT: 5 volt
+
+TEST: resistance conversion (milliohms to ohms)
+INPUT: 5000mΩ -> Ω
+EXPECT: 5 ohm
+
+TEST: capacitance conversion (picofarads to nanofarads)
+INPUT: 1000pF -> nF
+EXPECT: 1 nanofarad
+
+TEST: inductance conversion (nanohenries to microhenries)
+INPUT: 1000nH -> μH
+EXPECT: 1.0000000000000002 microhenry

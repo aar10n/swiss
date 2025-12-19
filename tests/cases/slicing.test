@@ -1,0 +1,53 @@
+INCLUDE: prelude.ch
+
+TEST: Basic list slice
+INPUT: [0, 1, 2, 3, 4][1:4]
+EXPECT: [1, 2, 3]
+
+TEST: Omitted start
+INPUT: [0, 1, 2, 3][:2]
+EXPECT: [0, 1]
+
+TEST: Omitted stop
+INPUT: [0, 1, 2, 3][2:]
+EXPECT: [2, 3]
+
+TEST: Out of range clamps
+INPUT: [0, 1, 2][0:10]
+EXPECT: [0, 1, 2]
+
+TEST: Negative indices
+INPUT: [0, 1, 2, 3, 4][-3:-1]
+EXPECT: [2, 3]
+
+TEST: Start greater than stop yields empty
+INPUT: [0, 1, 2][2:1]
+EXPECT: []
+
+TEST: Tuple slice
+INPUT: (1, 2, 3, 4)[1:3]
+EXPECT: (2, 3)
+
+TEST: String slice
+INPUT: "abcdef"[1:4]
+EXPECT: bcd
+
+TEST: Reverse helper list
+INPUT: reverse([1, 2, 3])
+EXPECT: [3, 2, 1]
+
+TEST: Reverse helper tuple
+INPUT: reverse((1, 2, 3))
+EXPECT: (3, 2, 1)
+
+TEST: Reverse helper string
+INPUT: reverse("abc")
+EXPECT: cba
+
+TEST: Reverse helper string
+INPUT: reverse("abc")
+EXPECT: cba
+
+TEST: Slice type error
+INPUT: 5[0:1]
+EXPECT_ERROR: Exception: cannot slice type: int

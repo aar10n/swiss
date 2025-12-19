@@ -1,0 +1,95 @@
+INCLUDE: prelude.ch
+
+TEST: Basic object literal
+INPUT: {"a": 1, "b": 2}
+EXPECT: {"a": 1, "b": 2}
+
+TEST: Trailing comma allowed
+INPUT: {"a": 1,}
+EXPECT: {"a": 1}
+
+TEST: Nested object access
+INPUT: {"outer": {"inner": 4}}["outer"]["inner"]
+EXPECT: 4
+
+TEST: Object indexing
+INPUT: {"a": 1, "b": 2}["b"]
+EXPECT: 2
+
+TEST: Object missing key
+INPUT: {"a": 1}["missing"]
+EXPECT_ERROR: Exception: object key not found: "missing"
+
+TEST: Object key must be string
+INPUT: {"a": 1}[0]
+EXPECT_ERROR: Exception: object indices must be strings, found int
+
+TEST: Object length
+INPUT: len({"a": 1, "b": 2, "c": 3})
+EXPECT: 3
+
+TEST: Nested object literal display
+INPUT: {"a": {"b": {"c": 5}}}
+EXPECT: {"a": {"b": {"c": 5}}}
+
+TEST: Object index assignment update
+INPUT: {
+  obj = {"a": 1, "b": 2}
+  obj["b"] = 5
+  obj["b"]
+}
+EXPECT: 5
+
+TEST: Object index assignment new key
+INPUT: {
+  obj = {"a": 1}
+  obj["c"] = 3
+  obj["c"]
+}
+EXPECT: 3
+
+TEST: List index assignment
+INPUT: {
+  xs = [1, 2, 3]
+  xs[1] = 9
+  xs[1]
+}
+EXPECT: 9
+
+TEST: List index assignment out of range
+INPUT: {
+  xs = [1, 2]
+  xs[5] = 1
+}
+EXPECT_ERROR: Exception: list index out of range: 5
+
+TEST: Tuple index assignment fails
+INPUT: {
+  t = (1, 2)
+  t[0] = 9
+}
+EXPECT_ERROR: Exception: cannot assign into tuple
+
+TEST: Delete removes key
+INPUT: {
+  obj = {"a": 1, "b": 2}
+  builtin::delete(obj, "a")
+  obj
+}
+EXPECT: {"b": 2}
+
+TEST: Delete no-op missing key
+INPUT: {
+  obj = {"a": 1}
+  builtin::delete(obj, "missing")
+  obj
+}
+EXPECT: {"a": 1}
+
+TEST: Append to list
+INPUT: {
+  xs = [1]
+  builtin::append(xs, 2)
+  xs
+}
+EXPECT: [1, 2]

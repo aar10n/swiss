@@ -1,0 +1,75 @@
+INCLUDE: prelude.ch
+
+; Test basic angle unit conversions
+TEST: Convert degrees to radians
+INPUT: 180deg -> rad
+EXPECT: 3.141592653589793 radian
+
+TEST: Convert radians to degrees
+INPUT: pi rad -> deg
+EXPECT: 180 degree
+
+TEST: Convert 60 degrees to radians
+INPUT: 60deg -> rad
+EXPECT: 1.0471975511965976 radian
+
+TEST: Convert 90 degrees to radians
+INPUT: 90deg -> rad
+EXPECT: 1.5707963267948966 radian
+
+; Test automatic unit coercion in trig functions
+TEST: sin(60 degrees) with automatic conversion
+INPUT: sin(60deg)
+EXPECT: 0.8660254037844386
+
+TEST: sin(90 degrees) with automatic conversion
+INPUT: sin(90deg)
+EXPECT: 1
+
+TEST: cos(60 degrees) with automatic conversion
+INPUT: cos(60deg)
+EXPECT: 0.5000000000000001
+
+TEST: cos(0 degrees) with automatic conversion
+INPUT: cos(0deg)
+EXPECT: 1
+
+TEST: tan(45 degrees) with automatic conversion
+INPUT: tan(45deg)
+EXPECT: 0.9999999999999999
+
+; Test unitless numbers are treated as radians
+TEST: sin with unitless number (treated as radians)
+INPUT: sin(1.5707963267948966)
+EXPECT: 1
+
+TEST: cos with unitless number (treated as radians)
+INPUT: cos(0)
+EXPECT: 1
+
+; Test gradians
+TEST: Convert gradians to radians
+INPUT: 200grad -> rad
+EXPECT: 3.1415926535897936 radian
+
+TEST: Convert 100 gradians to radians
+INPUT: 100grad -> rad
+EXPECT: 1.5707963267948968 radian
+
+; Test turns
+TEST: Convert 1 turn to radians
+INPUT: 1turn -> rad
+EXPECT: 6.283185307179586 radian
+
+TEST: Convert half turn to radians
+INPUT: 0.5turn -> rad
+EXPECT: 3.141592653589793 radian
+
+; Test angle arithmetic
+TEST: Add angles in different units
+INPUT: 90deg + 100grad -> deg
+EXPECT: 180 degree
+
+TEST: Add radians and degrees
+INPUT: pi rad + 180deg -> rad
+EXPECT: 6.283185307179586 radian

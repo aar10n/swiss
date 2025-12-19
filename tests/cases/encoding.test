@@ -1,0 +1,21 @@
+INCLUDE: prelude.ch
+
+TEST: Encode object
+INPUT: encode("json", {"a": 1, "b": [true, "x"]})
+EXPECT: {"a":1,"b":[true,"x"]}
+
+TEST: Decode object
+INPUT: decode("json", "{\"a\":1,\"b\":[true,false]}")
+EXPECT: {"a": 1, "b": [true, false]}
+
+TEST: Round trip list
+INPUT: decode("json", encode("json", [1, 2, 3]))
+EXPECT: [1, 2, 3]
+
+TEST: Encode dimensioned quantity error
+INPUT: encode("json", 1 m)
+EXPECT_ERROR: Exception: cannot encode dimensioned quantity to json
+
+TEST: Missing encoding error
+INPUT: encode("yaml", 1)
+EXPECT_ERROR: Exception: encoding 'yaml' not registered

@@ -1,0 +1,197 @@
+INCLUDE: prelude.ch
+
+; ============================================
+; Direct Conversions (O(1) graph lookups)
+; ============================================
+
+TEST: meter to kilometer direct conversion
+INPUT: 5000m -> km
+EXPECT: 5 kilometer
+
+TEST: kilometer to meter direct conversion
+INPUT: 5km -> m
+EXPECT: 5000 meter
+
+TEST: gram to kilogram direct conversion
+INPUT: 2500g -> kg
+EXPECT: 2.5 kilogram
+
+TEST: kilogram to gram direct conversion
+INPUT: 0.5kg -> g
+EXPECT: 500 gram
+
+; ============================================
+; Multi-hop Conversions (through graph)
+; ============================================
+
+TEST: millimeter to kilometer (multi-hop)
+INPUT: 5000000mm -> km
+EXPECT: 5 kilometer
+
+TEST: picosecond to hour (multi-hop)
+INPUT: 3600000000000000ps -> hr
+EXPECT: 1 hour
+
+TEST: milligram to tonne (extreme multi-hop)
+INPUT: 5000000000g -> t
+EXPECT: 5000 tonne
+
+; ============================================
+; Cross-system Conversions (Imperial ↔ Metric)
+; ============================================
+
+TEST: meters to feet
+INPUT: 10m -> ft
+EXPECT: 32.808398950131235 foot
+
+TEST: feet to meters
+INPUT: 100ft -> m
+EXPECT: 30.48 meter
+
+TEST: inches to centimeters
+INPUT: 10in -> cm
+EXPECT: 25.4 centimeter
+
+TEST: miles to kilometers
+INPUT: 5mi -> km
+EXPECT: 8.0467 kilometer
+
+TEST: kilometers to miles
+INPUT: 10km -> mi
+EXPECT: 6.213727366498068 mile
+
+; ============================================
+; Bidirectional Conversions
+; ============================================
+
+TEST: second to minute and back
+INPUT: (60s -> min) -> s
+EXPECT: 60 second
+
+TEST: meter to foot and back
+INPUT: (10m -> ft) -> m
+EXPECT: 10 meter
+
+TEST: gram to kilogram and back
+INPUT: (1000g -> kg) -> g
+EXPECT: 1000 gram
+
+; ============================================
+; Time Unit Conversions
+; ============================================
+
+TEST: seconds to minutes
+INPUT: 120s -> min
+EXPECT: 2 minute
+
+TEST: minutes to hours
+INPUT: 180min -> hr
+EXPECT: 3 hour
+
+TEST: hours to days
+INPUT: 48hr -> day
+EXPECT: 2 day
+
+TEST: milliseconds to seconds
+INPUT: 5000ms -> s
+EXPECT: 5 second
+
+TEST: nanoseconds to microseconds
+INPUT: 5000ns -> us
+EXPECT: 5.000000000000001 microsecond
+
+; ============================================
+; Length Unit Conversions
+; ============================================
+
+TEST: millimeters to meters
+INPUT: 2500mm -> m
+EXPECT: 2.5 meter
+
+TEST: centimeters to meters
+INPUT: 150cm -> m
+EXPECT: 1.5 meter
+
+TEST: yards to feet
+INPUT: 3yd -> ft
+EXPECT: 8.999999999999998 foot
+
+TEST: inches to feet
+INPUT: 36in -> ft
+EXPECT: 3 foot
+
+; ============================================
+; Electrical Unit Conversions
+; ============================================
+
+TEST: millivolts to volts
+INPUT: 5000mV -> V
+EXPECT: 5 volt
+
+TEST: kilovolts to volts
+INPUT: 2kV -> V
+EXPECT: 2000 volt
+
+TEST: milliohms to ohms
+INPUT: 5000mΩ -> Ω
+EXPECT: 5 ohm
+
+TEST: kiloohms to megaohms
+INPUT: 5000kΩ -> MΩ
+EXPECT: 5 megaohm
+
+TEST: picofarads to nanofarads
+INPUT: 5000pF -> nF
+EXPECT: 5 nanofarad
+
+TEST: microfarads to millifarads
+INPUT: 5000μF -> mF
+EXPECT: 5 millifarad
+
+; ============================================
+; Current Unit Conversions
+; ============================================
+
+TEST: milliamperes to amperes
+INPUT: 5000mA -> I
+EXPECT: 5 ampere
+
+TEST: microamperes to milliamperes
+INPUT: 5000μA -> mA
+EXPECT: 5 milliampere
+
+; ============================================
+; Frequency Unit Conversions
+; ============================================
+
+TEST: hertz to kilohertz
+INPUT: 5000Hz -> kHz
+EXPECT: 5 kilohertz
+
+TEST: kilohertz to megahertz
+INPUT: 5000kHz -> MHz
+EXPECT: 5 megahertz
+
+TEST: megahertz to gigahertz
+INPUT: 5000MHz -> GHz
+EXPECT: 5 gigahertz
+
+; ============================================
+; Data Storage Unit Conversions
+; ============================================
+
+TEST: bytes to kilobytes
+INPUT: 2048B -> KB
+EXPECT: 2 kilobyte
+
+TEST: kilobytes to megabytes
+INPUT: 2048KB -> MB
+EXPECT: 2 megabyte
+
+TEST: megabytes to gigabytes
+INPUT: 2048MB -> GB
+EXPECT: 2 gigabyte
+
+TEST: kibibytes to mebibytes
+INPUT: 2048KiB -> MiB
+EXPECT: 2 mebibyte

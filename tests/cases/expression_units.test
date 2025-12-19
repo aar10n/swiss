@@ -1,0 +1,100 @@
+INCLUDE: prelude.ch
+
+; ============================================
+; Expression-Based Unit Definitions
+; ============================================
+; These tests verify that units defined using expressions
+; (e.g., unit min = 60 s) correctly compute their dimensions
+; from the expression and work in conversions.
+
+TEST: minute defined as expression (60 s)
+INPUT: 1min
+EXPECT: 1 minute
+
+TEST: hour defined as expression (3600 s)
+INPUT: 1hr
+EXPECT: 1 hour
+
+TEST: millimeter defined as expression (1e-3 m)
+INPUT: 1mm
+EXPECT: 1 millimeter
+
+TEST: kilometer defined as expression (1e3 m)
+INPUT: 1km
+EXPECT: 1 kilometer
+
+TEST: gram defined as expression (1e-3 kg)
+INPUT: 1g
+EXPECT: 1 gram
+
+TEST: tonne defined as expression (1e3 kg)
+INPUT: 1t
+EXPECT: 1 tonne
+
+; ============================================
+; Expression-Based Unit Conversions
+; ============================================
+
+TEST: expression unit to base unit (minute to second)
+INPUT: 5min -> s
+EXPECT: 300 second
+
+TEST: expression unit to expression unit (hour to minute)
+INPUT: 2hr -> min
+EXPECT: 120 minute
+
+TEST: chain of expression units (millisecond to microsecond)
+INPUT: 5ms -> us
+EXPECT: 5000 microsecond
+
+TEST: imperial expression unit (inch to meter)
+INPUT: 10in -> m
+EXPECT: 0.254 meter
+
+TEST: imperial expression unit (foot to meter)
+INPUT: 10ft -> m
+EXPECT: 3.048 meter
+
+TEST: imperial expression unit (mile to meter)
+INPUT: 1mi -> m
+EXPECT: 1609.34 meter
+
+; ============================================
+; Arithmetic with Expression-Based Units
+; ============================================
+
+TEST: add expression units (same dimension)
+INPUT: 30min + 30min
+EXPECT: 60 minute
+
+TEST: multiply expression units
+INPUT: 10m * 5m
+EXPECT: 50 meter^2
+
+TEST: divide expression units (different dimension)
+INPUT: 100km / 2hr
+EXPECT: 50 kilometer / hour
+
+; ============================================
+; Expression Units in Complex Calculations
+; ============================================
+
+TEST: speed calculation with expression units
+INPUT: 300km / 3hr
+EXPECT: 100 kilometer / hour
+
+; ============================================
+; Nested Expression Unit Conversions
+; ============================================
+
+TEST: nested time conversion (picosecond -> second)
+INPUT: 1000000000000ps -> s
+EXPECT: 1 second
+
+TEST: nested length conversion (millimeter -> kilometer)
+INPUT: 1000000mm -> km
+EXPECT: 1 kilometer
+
+TEST: extreme nested conversion (picosecond -> hour)
+INPUT: 3600000000000000ps -> hr
+EXPECT: 1 hour
