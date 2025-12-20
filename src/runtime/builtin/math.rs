@@ -1,7 +1,8 @@
 use crate::runtime::{Context, Exception, Module, Quantity};
 
-pub(super) fn register(module: &mut Module) {
-    module
+pub(super) fn register(ctx: &mut Context) {
+    ctx.get_module_mut("builtin")
+        .expect("builtin module should exist")
         .with_function(builtin_fn_v2!("ln", |&ctx, x: num| {
             Quantity::safe_ln(ctx, x)
         }))

@@ -1,9 +1,12 @@
 pub mod builtin;
+mod collector;
 mod context;
 mod conversion;
 mod dimension;
 mod encoding;
 mod exception;
+mod file;
+mod handle;
 mod interface;
 mod io;
 mod module;
@@ -16,11 +19,14 @@ mod value;
 
 use crate::diag::{Error, IntoError};
 use crate::source::{SourceId, SourcePos, SourceSpan, Spanned};
+pub use collector::collect_cycles;
 pub use context::*;
 pub use conversion::*;
 pub use dimension::*;
 pub use encoding::*;
 pub use exception::*;
+pub use file::*;
+pub use handle::*;
 pub use io::*;
 pub use module::*;
 pub use name::*;

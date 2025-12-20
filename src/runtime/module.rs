@@ -267,6 +267,10 @@ impl ModuleMap {
         self.module_tree.len()
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = &Module> {
+        self.module_tree.items().iter()
+    }
+
     pub fn get_module(&self, path: impl PathLike) -> Result<&Module, NameError> {
         self.module_tree
             .get(path)

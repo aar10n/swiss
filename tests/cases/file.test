@@ -1,0 +1,27 @@
+INCLUDE: prelude.ch
+WORKDIR: ${FILE_DIR}/../testdata/
+
+TEST: open and read_all returns file contents
+INPUT: open("hello.txt").read_all()
+EXPECT: "Hello, world!\n"
+
+TEST: close is idempotent
+INPUT: {
+  f = open("hello.txt")
+  f.close()
+  f.close()
+  "ok"
+}
+EXPECT: "ok"
+
+TEST: read after close raises
+INPUT: {
+  f = open("hello.txt")
+  f.close()
+  f.read_all()
+}
+EXPECT_ERROR: Exception: file is closed
+
+TEST: opening missing file errors
+INPUT: open("missing.txt")
+EXPECT_ERROR: Exception: No such file or directory (os error 2)

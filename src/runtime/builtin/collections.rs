@@ -4,8 +4,9 @@ use crate::runtime::{Context, Exception, Module, Value};
 use smallvec::SmallVec;
 use ustr::Ustr;
 
-pub(super) fn register(module: &mut Module) {
-    module
+pub(super) fn register(ctx: &mut Context) {
+    ctx.get_module_mut("builtin")
+        .expect("builtin module should exist")
         .with_function(builtin_fn_v2!("len", |&ctx, v: any| {
             let len = match v {
                 Value::String(s) => s.chars().count(),
@@ -24,7 +25,9 @@ pub(super) fn register(module: &mut Module) {
         }))
         .with_function(builtin_fn_v2!("reverse", |&ctx, v: any| {
             let result = match v {
-                Value::List(list) => Value::list(list.borrow_slice().iter().cloned().rev().collect()),
+                Value::List(list) => {
+                    Value::list(list.borrow_slice().iter().cloned().rev().collect())
+                }
                 Value::Tuple(tuple) => {
                     let mut items: Vec<Value> = tuple.iter().map(|v| (**v).clone()).collect();
                     items.reverse();
@@ -45,99 +48,6 @@ pub(super) fn register(module: &mut Module) {
                 }
             };
             Ok(result)
-        }))
-        .with_function(builtin_fn_v2!("index", |&ctx, container: any, idx: any| {
-            let idx_value = match idx {
-                Value::Ref(r) => r.borrow().clone(),
-                other => other,
-            };
-
-            let as_usize = |value: Value| -> Result<usize, Exception> {
-                match value {
-                    Value::Quantity(q) if q.is_dimless() => q
-                        .number
-                        .into_int(ctx)
-                        .map_err(|e| e.with_backtrace(ctx.backtrace()))?
-                        .to_usize()
-                        .ok_or_else(|| {
-                            Exception::new("IndexError", "index must be non-negative".to_string())
-                                .with_backtrace(ctx.backtrace())
-                        }),
-                    other => Err(Exception::new(
-                        "TypeError",
-                        format!(
-                            "index must be an integer, found {}",
-                            other.ty().plain_string(ctx)
-                        ),
-                    )
-                    .with_backtrace(ctx.backtrace())),
-                }
-            };
-
-            let value = match container {
-                Value::List(list) => {
-                    let idx = as_usize(idx_value)?;
-                    list.get(idx).ok_or_else(|| {
-                        Exception::new("IndexError", format!("list index out of range: {}", idx))
-                            .with_backtrace(ctx.backtrace())
-                    })?
-                }
-                Value::Tuple(tuple) => {
-                    let idx = as_usize(idx_value)?;
-                    *tuple.get(idx).cloned().ok_or_else(|| {
-                        Exception::new("IndexError", format!("tuple index out of range: {}", idx))
-                            .with_backtrace(ctx.backtrace())
-                    })?
-                }
-                Value::Object(object) => {
-                    let key = match idx_value {
-                        Value::String(s) => s,
-                        Value::Ref(r) => match r.borrow().clone() {
-                            Value::String(s) => s,
-                            other => {
-                                return Err(Exception::new(
-                                    "TypeError",
-                                    format!(
-                                        "object indices must be strings, found {}",
-                                        other.ty().plain_string(ctx)
-                                    ),
-                                )
-                                .with_backtrace(ctx.backtrace()))
-                            }
-                        },
-                        other => {
-                            return Err(Exception::new(
-                                "TypeError",
-                                format!(
-                                    "object indices must be strings, found {}",
-                                    other.ty().plain_string(ctx)
-                                ),
-                            )
-                            .with_backtrace(ctx.backtrace()))
-                        }
-                    };
-
-                    let key_ustr = Ustr::from(&key);
-                    object
-                        .borrow()
-                        .iter()
-                        .find(|(k, _)| *k == key_ustr)
-                        .map(|(_, v)| v.clone())
-                        .ok_or_else(|| {
-                            Exception::new("KeyError", format!("object key not found: \"{}\"", key))
-                                .with_backtrace(ctx.backtrace())
-                        })?
-                }
-                other => {
-                    return Err(Exception::new(
-                        "TypeError",
-                        format!("cannot index into type: {}", other.ty().plain_string(ctx)),
-                    )
-                    .with_backtrace(ctx.backtrace()))
-                }
-            };
-
-            Ok(value)
         }))
         .with_function(builtin_fn_v2!("delete", |&ctx, obj: any, key: str| {
             match obj {

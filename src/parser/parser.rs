@@ -881,6 +881,14 @@ impl<'a> Parser<'a> {
         self.trace("parse_expr_term", |parser| {
             if let Some((_, lspan)) = parser.consume_one(Token::LDelim("(")) {
                 parser.consume_any(Token::Space);
+                if parser.peek_token() == &Token::RDelim(")") {
+                    // Empty unit expression.
+                    let (_, rspan) = parser.expect(Token::RDelim(")"), "expected ')'")?;
+                    let span =
+                        SourceSpan::new(parser.source_id, lspan.start, rspan.end);
+                    return Ok(Expr::empty().with_span(span));
+                }
+
                 let expr = parser.parse_expr(isize::MIN)?;
                 parser.consume_any(Token::Space);
 
@@ -1255,9 +1263,7 @@ impl<'a> Parser<'a> {
                         Ty::tuple(types)
                     }
                     _ => {
-                        let err = ValueError::new("invalid type", raw_ty.to_string_inner())
-                            .with_extra("expected built-in type".to_owned());
-                        return Err(ParseError::from(err));
+                        Ty::handle(raw_ty.raw)
                     }
                 };
                 Ok(ty)

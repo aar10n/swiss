@@ -91,6 +91,7 @@ infix operator (&)(num,num) = builtin::bit_and
 #[precedence=10]
 infix operator (^)(num,num) = builtin::pow
 #[precedence=11]
+infix operator (.)(any,any) = builtin::method_call
 infix operator ([])(any,any) = builtin::index
 infix operator (->)(num,unit) = builtin::unit_cast
 
@@ -277,16 +278,19 @@ fn print(v...) { builtin::print(v...) }
 fn reverse(v: any) { builtin::reverse(v) }
 fn delete(obj: object, key: str) { builtin::delete(obj, key) }
 fn append(list: list, item: any) { builtin::append(list, item) }
+fn open(path: str) { builtin::open(path) }
 
 fn write(io, v: any) { builtin::write(io, v) }
 fn writeln(io, v: any) { builtin::writeln(io, v) }
+
+fn encode(name, value) { builtin::encode(name, value) }
+fn decode(name, text) { builtin::decode(name, text) }
 
 fn json_encode(value) { builtin::json_encode(value) }
 fn json_decode(text) { builtin::json_decode(text) }
 builtin::register_encoding("json", json_encode, json_decode)
 
-fn encode(name, value) { builtin::encode(name, value) }
-fn decode(name, text) { builtin::decode(name, text) }
+; Formatters
 
 fn fmt_plain(v: any, io) {
   write(io, builtin::to_string(v))

@@ -497,6 +497,7 @@ impl PrettyPrint<Context> for Expr {
                 }
                 write!(out, "{RPARN}")
             }
+            ExprKind::Empty => write!(out, "{LPARN}{RPARN}"),
             ExprKind::Path(path) => path.pretty_print(out, ctx, level),
             ExprKind::Ident(ident) => ident.pretty_print(out, ctx, level),
             ExprKind::Number(number) => number.pretty_print(out, ctx, level),
@@ -565,6 +566,7 @@ impl PrettyPrint<Context> for Ty {
             TyKind::Str => write!(out, "{ATTR}string{RESET}"),
             TyKind::Function => write!(out, "{ATTR}fn{RESET}"),
             TyKind::Io => write!(out, "{ATTR}io{RESET}"),
+            TyKind::Handle(name) => write!(out, "{ATTR}{}{RESET}", name),
             TyKind::Num => write!(out, "{ATTR}num{RESET}"),
             TyKind::Unit => write!(out, "{ATTR}unit{RESET}"),
             TyKind::Type => write!(out, "{ATTR}type{RESET}"),

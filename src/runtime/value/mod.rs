@@ -1,4 +1,5 @@
 mod dim;
+mod iterator;
 mod number;
 mod quantity;
 mod reference;
@@ -6,6 +7,7 @@ mod ty;
 mod value;
 
 pub use dim::*;
+pub use crate::runtime::handle::Handle;
 pub use number::*;
 pub use quantity::*;
 pub use reference::*;

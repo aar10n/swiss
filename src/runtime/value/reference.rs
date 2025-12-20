@@ -1,9 +1,9 @@
-use super::{Context, Exception, Ty, Value};
+use super::{iterator::Iterable, Context, Exception, Ty, Value};
 use crate::print::{PrettyPrint, PrettyString};
 
 use smallvec::SmallVec;
 use std::cell::{self, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 // MARK: VRef
 
@@ -52,6 +52,14 @@ impl<T: Clone> VRef<T> {
 
     pub fn strong_count(&self) -> usize {
         Rc::strong_count(&self.inner)
+    }
+
+    pub fn ptr(&self) -> usize {
+        Rc::as_ptr(&self.inner) as usize
+    }
+
+    pub fn downgrade(&self) -> Weak<RefCell<T>> {
+        Rc::downgrade(&self.inner)
     }
 }
 
@@ -127,32 +135,16 @@ impl ValueRef {
 
     pub fn try_into_tuple(self, ctx: &Context) -> Result<SmallVec<[Box<Value>; 3]>, Exception> {
         let inner_ref = self.borrow();
-        match &*inner_ref {
-            Value::Tuple(t) => Ok(t.clone()),
-            _ => Err(Exception::new(
-                "TypeError",
-                format!("expected tuple, got {}", self.ty().pretty_string(ctx)),
-            )),
-        }
+        inner_ref.clone().try_into_tuple(ctx)
     }
 
     pub fn try_into_list(self, ctx: &Context) -> Result<super::List, Exception> {
-        match self.inner.replace(Value::Empty) {
-            Value::Ref(r) => {
-                let value = r.into_value();
-                match value {
-                    Value::List(l) => Ok(l),
-                    _ => Err(Exception::new(
-                        "TypeError",
-                        format!("expected list, got {}", self.ty().pretty_string(ctx)),
-                    )),
-                }
-            }
-            Value::List(l) => Ok(l.clone()),
-            _ => Err(Exception::new(
-                "TypeError",
-                format!("expected list, got {}", self.ty().pretty_string(ctx)),
-            )),
-        }
+        let inner_ref = self.borrow();
+        inner_ref.clone().try_into_list(ctx)
+    }
+
+    pub fn try_into_iter(self, ctx: &Context) -> Result<Box<dyn Iterable>, Exception> {
+        let inner_ref = self.borrow();
+        inner_ref.clone().try_into_iter(ctx)
     }
 }

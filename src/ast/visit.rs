@@ -383,6 +383,7 @@ impl Visit for Expr {
             ExprKind::Tuple(tuple) => {
                 visitor.visit_tuple(tuple)?;
             }
+            ExprKind::Empty => {}
             ExprKind::Path(path) => {
                 path.visit(visitor)?;
             }

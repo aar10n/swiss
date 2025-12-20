@@ -1112,10 +1112,62 @@ impl<'ctx> Interp<'ctx, LRValue> for Expr {
                     Ok(LRValue::R(value))
                 }
                 ExprKind::InfixOp(op, lhs, rhs) => {
-                    let func = op.eval(intrp)?;
-                    let args = ListNode::from(vec![*lhs.clone(), *rhs.clone()]);
-                    Ok(LRValue::R(intrp.invoke(&func, args, op.span())?))
+                    // Special-case method dispatch via the (.) operator so the RHS
+                    // method name/args are preserved instead of eagerly evaluated.
+                    if op.raw.as_str() == "." {
+                        let func = op.eval(intrp)?;
+                        let recv = Interp::<Value>::eval(lhs, intrp)?;
+
+                        let (method_name, arg_values) = match &rhs.kind {
+                            ExprKind::FnCall(func_path, args) => {
+                                let name = match func_path.parts.as_slice() {
+                                    [ident] => ident.raw,
+                                    _ => {
+                                        return Err(InterpError::TypeError(TypeError::mismatch(
+                                            "method name".to_string(),
+                                            rhs.span().into_spanned(
+                                                "expected simple method name on RHS of '.'".to_string(),
+                                            ),
+                                        )))
+                                    }
+                                };
+
+                                let values = args
+                                    .iter()
+                                    .map(|arg| Interp::<Value>::eval(arg, intrp))
+                                    .collect::<InterpResult<Vec<_>>>()?;
+                                (name, values)
+                            }
+                            ExprKind::Ident(ident) => (ident.raw, Vec::new()),
+                            ExprKind::Path(path) if path.parts.len() == 1 => {
+                                (path.parts[0].raw, Vec::new())
+                            }
+                            _ => {
+                                return Err(InterpError::TypeError(TypeError::mismatch(
+                                    "method call".to_string(),
+                                    rhs.span().into_spanned(
+                                        "expected method call on RHS of '.'".to_string(),
+                                    ),
+                                )))
+                            }
+                        };
+
+                        let method_tuple = Value::Tuple(smallvec![
+                            Box::new(Value::String(method_name.to_string())),
+                            Box::new(Value::list(arg_values)),
+                        ]);
+
+                        let result =
+                            crate::interp::call_function(intrp.ctx, &func, vec![recv, method_tuple])
+                                .map_err(InterpError::from)?;
+                        Ok(LRValue::R(result))
+                    } else {
+                        let func = op.eval(intrp)?;
+                        let args = ListNode::from(vec![*lhs.clone(), *rhs.clone()]);
+                        Ok(LRValue::R(intrp.invoke(&func, args, op.span())?))
+                    }
                 }
+                ExprKind::Empty => Ok(LRValue::R(Value::Empty)),
                 ExprKind::IndexAssign(container, index, value) => {
                     // Evaluate container and index refs (container must be mutable for list/object)
                     let container_ref = Interp::<ValueRef>::eval(container, intrp)?;
@@ -1248,14 +1300,19 @@ impl<'ctx> Interp<'ctx, LRValue> for Expr {
                 }
                 ExprKind::ForRange(pat, iter, body) => {
                     let pat = pat.eval(intrp)?;
-                    let iter = Interp::<ValueRef>::eval(iter, intrp)?.try_into_list(intrp.ctx)?;
-                    for value in iter.borrow_slice().iter().cloned() {
-                        let scope = LocalScope::from(pat.bind_with(intrp.ctx, value)?.into_iter());
-                        match Context::with_scope(intrp, scope, |intrp| Interp::<Value>::eval(body, intrp)) {
-                            Ok(_) => {}, // Normal iteration
-                            Err(InterpError::Continue) => continue, // Skip to next iteration
-                            Err(InterpError::Break) => break, // Exit loop
-                            Err(e) => return Err(e), // Propagate other errors
+                    let mut iter = Interp::<ValueRef>::eval(iter, intrp)?.try_into_iter(intrp.ctx)?;
+                    loop {
+                        match iter.as_mut().next(intrp.ctx)? {
+                            Some(value) => {
+                                let scope = LocalScope::from(pat.bind_with(intrp.ctx, value)?.into_iter());
+                                match Context::with_scope(intrp, scope, |intrp| Interp::<Value>::eval(body, intrp)) {
+                                    Ok(_) => {}
+                                    Err(InterpError::Continue) => continue,
+                                    Err(InterpError::Break) => break,
+                                    Err(e) => return Err(e),
+                                }
+                            }
+                            None => break,
                         }
                     }
                     Ok(LRValue::R(Value::Empty))
@@ -1487,7 +1544,8 @@ impl<'ctx> Interp<'ctx, rt::Ty> for Ty {
                 TyKind::Float => Ty::Float,
                 TyKind::Str => Ty::Str,
                 TyKind::Function => Ty::Function,
-                TyKind::Io => Ty::Io,
+                TyKind::Io => Ty::Handle("io".into()),
+                TyKind::Handle(name) => Ty::Handle(*name),
                 TyKind::Num => Ty::Num,
                 TyKind::Unit => Ty::Unit,
                 TyKind::Type => Ty::Type,

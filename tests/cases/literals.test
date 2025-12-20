@@ -75,3 +75,7 @@ EXPECT: "AΩ"
 TEST: Invalid escape
 INPUT: "bad\z"
 EXPECT_ERROR: invalid escape sequence
+
+TEST: Empty expression
+INPUT: ()
+EXPECT: ()

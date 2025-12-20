@@ -1,9 +1,31 @@
 use crate::interp;
 use crate::print::{DisplayString, PrettyString};
-use crate::runtime::{Context, Exception, IoHandle, Module, Value};
+use crate::runtime::{Context, Exception, Handle, IoHandle, Module, Value};
 
-pub(super) fn register(module: &mut Module) {
-    module
+pub(super) fn write_impl(ctx: &mut Context, io: IoHandle, v: Value) -> Result<Value, Exception> {
+    let content = match &v {
+        Value::String(s) => s.clone(),
+        _ => v.display_string(ctx),
+    };
+    io.write_str(&content)
+        .map_err(|e| Exception::new("IoError", e.to_string()).with_backtrace(ctx.backtrace()))?;
+    Ok(Value::default())
+}
+
+pub(super) fn writeln_impl(ctx: &mut Context, io: IoHandle, v: Value) -> Result<Value, Exception> {
+    let mut content = match &v {
+        Value::String(s) => s.clone(),
+        _ => v.display_string(ctx),
+    };
+    content.push('\n');
+    io.write_str(&content)
+        .map_err(|e| Exception::new("IoError", e.to_string()).with_backtrace(ctx.backtrace()))?;
+    Ok(Value::default())
+}
+
+pub(super) fn register(ctx: &mut Context) {
+    ctx.get_module_mut("builtin")
+        .expect("builtin module should exist")
         .with_function(builtin_fn_v2!("print", |&ctx, ...args| {
             let args = args
                 .into_iter()
@@ -19,36 +41,40 @@ pub(super) fn register(module: &mut Module) {
             Ok(v)
         }))
         .with_function(builtin_fn_v2!("write", |&ctx, io: io, v: any| {
-            let content = match &v {
-                Value::String(s) => s.clone(),
-                _ => v.display_string(ctx),
-            };
-            io.write_str(&content).map_err(|e| {
-                Exception::new("IoError", e.to_string()).with_backtrace(ctx.backtrace())
-            })?;
-            Ok(Value::default())
+            write_impl(ctx, io, v)
         }))
         .with_function(builtin_fn_v2!("writeln", |&ctx, io: io, v: any| {
-            let mut content = match &v {
-                Value::String(s) => s.clone(),
-                _ => v.display_string(ctx),
-            };
-            content.push('\n');
-            io.write_str(&content).map_err(|e| {
-                Exception::new("IoError", e.to_string()).with_backtrace(ctx.backtrace())
-            })?;
-            Ok(Value::default())
+            writeln_impl(ctx, io, v)
         }))
         .with_function(
             builtin_fn_v2!("format_apply", |&ctx, value: any, formatter: fn| {
                 let io = IoHandle::buffer();
 
                 // formatter(value, io)
-                interp::call_function(ctx, &formatter, vec![value.clone(), Value::Io(io.clone())])?;
+                interp::call_function(
+                    ctx,
+                    &formatter,
+                    vec![value.clone(), Value::Handle(Handle::new("io".into(), io.clone()))],
+                )?;
                 if let Some(buf) = io.take_buffer() {
                     ctx.set_pending_output(buf);
                 }
                 Ok(value)
             }),
         );
+
+    ctx.handle_methods.register(
+        "io",
+        "write",
+        builtin_fn_v2!("io.write", |&ctx, io: io, v: any| {
+            write_impl(ctx, io, v)
+        }),
+    );
+    ctx.handle_methods.register(
+        "io",
+        "writeln",
+        builtin_fn_v2!("io.writeln", |&ctx, io: io, v: any| {
+            writeln_impl(ctx, io, v)
+        }),
+    );
 }

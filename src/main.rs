@@ -14,7 +14,7 @@ mod source;
 use id::{ModuleId, SourceId};
 use print::ansi::{GREEN, RESET, YELLOW};
 use print::{PrettyPrint, PrettyString};
-use runtime::{Context, IoHandle, Value};
+use runtime::{Context, Handle, IoHandle, Value};
 use source::{SourceFile, SourceSpan, Spanned};
 
 use std::env;
@@ -101,7 +101,7 @@ fn evaluate(
     module_id: ModuleId,
     print_result: bool,
 ) -> Result<(), ()> {
-    match driver::eval_source(ctx, source_id, module_id) {
+    let result = match driver::eval_source(ctx, source_id, module_id) {
         Ok(Some(value)) if print_result => {
             use crate::print::DisplayString;
             if let Some(buf) = ctx.take_pending_output() {
@@ -124,7 +124,7 @@ fn evaluate(
                             crate::interp::call_function(
                                 ctx,
                                 &func,
-                                vec![value.clone(), Value::Io(io.clone())],
+                                vec![value.clone(), Value::Handle(Handle::new("io".into(), io.clone()))],
                             )
                         });
                         if res.is_ok() {
@@ -163,7 +163,7 @@ fn evaluate(
                             crate::interp::call_function(
                                 ctx,
                                 &func,
-                                vec![value.clone(), Value::Io(io.clone())],
+                                vec![value.clone(), Value::Handle(Handle::new("io".into(), io.clone()))],
                             )
                         });
                         if res.is_ok() {
@@ -193,7 +193,10 @@ fn evaluate(
             err.print_stderr(ctx);
             Err(())
         }
-    }
+    };
+
+    ctx.collect_cycles(); // clean up any reference cycles
+    result
 }
 
 fn read_from_file(path: &str) -> String {

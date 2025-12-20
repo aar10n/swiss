@@ -591,6 +591,8 @@ pub enum ExprKind {
     Tuple(ListNode<Expr>),
     /// An object literal.
     Object(ListNode<ObjectField>),
+    /// Empty unit expression ().
+    Empty,
     /// An identifier path.
     Path(Path),
     /// An identifier.
@@ -670,6 +672,10 @@ impl Expr {
 
     pub fn object(items: ListNode<ObjectField>) -> Self {
         Self::new(ExprKind::Object(items))
+    }
+
+    pub fn empty() -> Self {
+        Self::new(ExprKind::Empty)
     }
 
     pub fn path(path: Path) -> Self {
@@ -763,6 +769,7 @@ pub enum TyKind {
     Num,
     Function,
     Io,
+    Handle(Ustr),
     Unit,
     Type,
     Object,
@@ -802,6 +809,10 @@ impl Ty {
 
     pub fn io() -> Self {
         Self::new(TyKind::Io)
+    }
+
+    pub fn handle(name: Ustr) -> Self {
+        Self::new(TyKind::Handle(name))
     }
 
     pub fn list() -> Self {

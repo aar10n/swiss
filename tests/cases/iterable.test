@@ -1,0 +1,64 @@
+INCLUDE: prelude.ch
+
+TEST: List iteration collects transformed values
+INPUT: {
+  xs = [1, 2, 3, 4]
+  res = []
+  for x := range xs {
+    res = append(res, x * 2)
+  }
+  res
+}
+EXPECT: [2, 4, 6, 8]
+
+TEST: Tuple iteration preserves order
+INPUT: {
+  t = (true, false, 3.14, "hi", 6)
+  res = []
+  for v := range t {
+    res = append(res, v)
+  }
+  res
+}
+EXPECT: [true, false, 3.14, "hi", 6]
+
+TEST: Object iteration yields key-value tuples
+INPUT: {
+  obj = {"a": 1, "b": 2, "c": 3}
+  res = []
+  for (k, v) := range obj {
+    res = append(res, (k, v))
+  }
+  res
+}
+EXPECT: [("a", 1), ("b", 2), ("c", 3)]
+
+TEST: Object iteration without destructuring
+INPUT: {
+  obj = {"x": 9}
+  res = []
+  for kv := range obj {
+    res = append(res, kv)
+  }
+  res
+}
+EXPECT: [("x", 9)]
+
+TEST: String iteration yields characters
+INPUT: {
+  s = "hi!"
+  res = []
+  for c := range s {
+    res = append(res, c)
+  }
+  res
+}
+EXPECT: ["h", "i", "!"]
+
+TEST: Iteration over non-iterable fails
+INPUT: {
+  for x := range 5 {
+    x
+  }
+}
+EXPECT_ERROR: Exception: expected iterable, got int

@@ -1,5 +1,9 @@
-use super::super::{Context, Conversion, Exception, Function, IoHandle};
-use super::{Dim, Number, Quantity, Ty};
+use super::super::{
+    collector::{register_list, register_object},
+    Context, Conversion, Exception, Function,
+};
+use super::iterator::{Iterable, ListIterator, ObjectIterator, StringIterator, TupleIterator};
+use super::{Dim, Handle, Number, Quantity, Ty};
 pub use super::{VRef, ValueRef};
 
 pub use crate::id::VarId;
@@ -8,7 +12,46 @@ use crate::print::{EvalPrint, PrettyPrint, PrettyString};
 
 use smallvec::SmallVec;
 use std::cell::RefCell;
+use std::collections::HashSet;
 use ustr::Ustr;
+
+thread_local! {
+    static PRINT_GUARD: RefCell<HashSet<(usize, u8)>> = RefCell::new(HashSet::new());
+}
+
+struct PrintGuard {
+    key: (usize, u8),
+    inserted: bool,
+}
+
+impl PrintGuard {
+    fn new(key: (usize, u8)) -> Self {
+        let inserted = PRINT_GUARD.with(|guard| {
+            let mut guard = guard.borrow_mut();
+            if guard.contains(&key) {
+                false
+            } else {
+                guard.insert(key);
+                true
+            }
+        });
+        Self { key, inserted }
+    }
+
+    fn is_cycle(&self) -> bool {
+        !self.inserted
+    }
+}
+
+impl Drop for PrintGuard {
+    fn drop(&mut self) {
+        if self.inserted {
+            PRINT_GUARD.with(|guard| {
+                guard.borrow_mut().remove(&self.key);
+            });
+        }
+    }
+}
 
 pub enum LRValue {
     L(ValueRef),
@@ -33,7 +76,7 @@ impl PrettyPrint<Context> for LRValue {
     }
 }
 
-// MARK: Value
+// MARK: List
 
 #[derive(Clone, Debug)]
 pub struct List {
@@ -46,8 +89,10 @@ pub struct List {
 impl List {
     pub fn new(values: Vec<Value>) -> Self {
         let len = values.len();
+        let buf = VRef::new(values);
+        register_list(&buf);
         List {
-            buf: VRef::new(values),
+            buf,
             start: 0,
             len,
             uses_full_len: true,
@@ -62,6 +107,10 @@ impl List {
         }
     }
 
+    pub fn buf_ptr(&self) -> usize {
+        self.buf.ptr()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -71,7 +120,11 @@ impl List {
         let uses_full = self.uses_full_len;
         let view_len = self.len;
         std::cell::Ref::map(self.buf.borrow(), move |data| {
-            let end = if uses_full { data.len() } else { start + view_len };
+            let end = if uses_full {
+                data.len()
+            } else {
+                start + view_len
+            };
             &data[start..end]
         })
     }
@@ -93,11 +146,17 @@ impl List {
 
     fn ensure_unique(&mut self) {
         let data_len = self.buf.borrow().len();
-        let view_len = if self.uses_full_len { data_len } else { self.len };
+        let view_len = if self.uses_full_len {
+            data_len
+        } else {
+            self.len
+        };
         let covering_all = self.start == 0 && view_len == data_len;
         if !covering_all {
             let slice = self.borrow_slice().to_vec();
-            self.buf = VRef::new(slice);
+            let buf = VRef::new(slice);
+            register_list(&buf);
+            self.buf = buf;
             self.start = 0;
             self.len = self.buf.borrow().len();
             self.uses_full_len = true;
@@ -134,6 +193,8 @@ impl List {
     }
 }
 
+// MARK: Value
+
 #[derive(Clone, Debug)]
 pub enum Value {
     Ref(ValueRef),
@@ -144,7 +205,7 @@ pub enum Value {
     String(String),
     Boolean(bool),
     Function(Function),
-    Io(IoHandle),
+    Handle(Handle),
     Unit(Ustr),
     Ty(Ty),
     Empty,
@@ -156,7 +217,9 @@ impl Value {
     }
 
     pub fn object(values: Vec<(Ustr, Value)>) -> Self {
-        Value::Object(VRef::new(values))
+        let buf = VRef::new(values);
+        register_object(&buf);
+        Value::Object(buf)
     }
 
     pub fn is_ref(&self) -> bool {
@@ -177,7 +240,7 @@ impl Value {
             Value::String(s) => s.is_empty(),
             Value::Boolean(b) => !b,
             Value::Function(_) => false,
-            Value::Io(_) => false,
+            Value::Handle(_) => false,
             Value::Unit(_) => false,
             Value::Ty(_) => false,
             Value::Empty => true,
@@ -218,7 +281,7 @@ impl Value {
             Value::String(_) => Ty::Str,
             Value::Boolean(_) => Ty::Bool,
             Value::Function(_) => Ty::Function,
-            Value::Io(_) => Ty::Io,
+            Value::Handle(h) => Ty::Handle(h.tag()),
             Value::Unit(_) => Ty::Unit,
             Value::Ty(_) => Ty::Type,
             Value::Empty => Ty::Empty,
@@ -238,7 +301,8 @@ impl Value {
             _ => Err(Exception::new(
                 "TypeError",
                 format!("expected tuple, got {}", self.ty().pretty_string(ctx)),
-            )),
+            )
+            .with_backtrace(ctx.backtrace())),
         }
     }
 
@@ -248,7 +312,22 @@ impl Value {
             _ => Err(Exception::new(
                 "TypeError",
                 format!("expected list, got {}", self.ty().pretty_string(ctx)),
-            )),
+            )
+            .with_backtrace(ctx.backtrace())),
+        }
+    }
+
+    pub fn try_into_iter(self, ctx: &Context) -> Result<Box<dyn Iterable>, Exception> {
+        match self {
+            Value::List(l) => Ok(Box::new(ListIterator::new(l))),
+            Value::Tuple(t) => Ok(Box::new(TupleIterator::new(t))),
+            Value::Object(o) => Ok(Box::new(ObjectIterator::new(o))),
+            Value::String(s) => Ok(Box::new(StringIterator::new(s))),
+            _ => Err(Exception::new(
+                "TypeError",
+                format!("expected iterable, got {}", self.ty().pretty_string(ctx)),
+            )
+            .with_backtrace(ctx.backtrace())),
         }
     }
 }
@@ -274,6 +353,12 @@ impl From<ValueRef> for Value {
 impl From<String> for Value {
     fn from(value: String) -> Self {
         Value::String(value)
+    }
+}
+
+impl From<Handle> for Value {
+    fn from(value: Handle) -> Self {
+        Value::Handle(value)
     }
 }
 
@@ -308,6 +393,10 @@ impl PrettyPrint<Context> for Value {
                 r.borrow().pretty_print(out, ctx, level)
             }
             Value::Object(o) => {
+                let guard = PrintGuard::new((o.ptr(), 2));
+                if guard.is_cycle() {
+                    return write!(out, "{{...}}");
+                }
                 write!(out, "{{")?;
                 for (i, (key, value)) in o.borrow().iter().enumerate() {
                     if i > 0 {
@@ -329,6 +418,10 @@ impl PrettyPrint<Context> for Value {
                 write!(out, ")")
             }
             Value::List(l) => {
+                let guard = PrintGuard::new((l.buf_ptr(), 1));
+                if guard.is_cycle() {
+                    return write!(out, "[...]");
+                }
                 write!(out, "[")?;
                 for (i, v) in l.borrow_slice().iter().enumerate() {
                     if i > 0 {
@@ -342,7 +435,7 @@ impl PrettyPrint<Context> for Value {
             Value::String(s) => write!(out, "{:?}", s),
             Value::Boolean(b) => write!(out, "{}", b),
             Value::Function(f) => write!(out, "<fn {}>", f.name.raw),
-            Value::Io(_) => write!(out, "<io>"),
+            Value::Handle(h) => write!(out, "<handle:{}>", h.tag()),
             Value::Unit(u) => {
                 // Prefer registered unit name; fall back to raw identifier.
                 let name = ctx
@@ -371,6 +464,10 @@ impl EvalPrint<Context> for Value {
                 r.borrow().display_print(out, ctx, level)
             }
             Value::Object(o) => {
+                let guard = PrintGuard::new((o.ptr(), 2));
+                if guard.is_cycle() {
+                    return write!(out, "{{...}}");
+                }
                 write!(out, "{{")?;
                 for (i, (key, value)) in o.borrow().iter().enumerate() {
                     if i > 0 {
@@ -392,6 +489,10 @@ impl EvalPrint<Context> for Value {
                 write!(out, ")")
             }
             Value::List(l) => {
+                let guard = PrintGuard::new((l.buf_ptr(), 1));
+                if guard.is_cycle() {
+                    return write!(out, "[...]");
+                }
                 write!(out, "[")?;
                 for (i, v) in l.borrow_slice().iter().enumerate() {
                     if i > 0 {
@@ -405,7 +506,7 @@ impl EvalPrint<Context> for Value {
             Value::String(s) => write!(out, "{:?}", s),
             Value::Boolean(b) => write!(out, "{}", b),
             Value::Function(f) => write!(out, "<fn {}>", f.name.raw),
-            Value::Io(_) => write!(out, "<io>"),
+            Value::Handle(h) => write!(out, "<handle:{}>", h.tag()),
             Value::Unit(u) => {
                 // Prefer display_name from unit impl if available.
                 let name = if let Some(module) = ctx.active_module() {

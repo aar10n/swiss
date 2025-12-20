@@ -19,7 +19,8 @@ macro_rules! builtin_ty_v2 {
     (str) => { crate::runtime::Ty::Str };
     (bool) => { crate::runtime::Ty::Bool };
     (fn) => { crate::runtime::Ty::Function };
-    (io) => { crate::runtime::Ty::Io };
+    (io) => { crate::runtime::Ty::Handle(ustr::Ustr::from("io")) };
+    (file) => { crate::runtime::Ty::Handle(ustr::Ustr::from("file")) };
     (list) => { crate::runtime::Ty::List };
     (tuple[$($t:ident),*]) => { crate::runtime::Ty::Tuple(vec![$(builtin_ty_v2!($t)),*]) };
     (unit) => { crate::runtime::Ty::Unit };
@@ -37,6 +38,7 @@ macro_rules! builtin_type_v2 {
     (bool) => { bool };
     (fn) => { crate::runtime::Function };
     (io) => { crate::runtime::IoHandle };
+    (file) => { crate::runtime::FileHandle };
     (unit) => { ustr::Ustr };
     (ty) => { crate::runtime::Ty };
     (...) => { Vec<crate::runtime::Value> };
@@ -201,6 +203,7 @@ macro_rules! builtin_interface {
 
 mod collections;
 mod encoding;
+mod file;
 mod io;
 mod math;
 mod operators;
@@ -228,19 +231,21 @@ pub(crate) fn take_varargs(ctx: &Context, args: &mut Vec<Value>) -> Result<Vec<V
 }
 
 pub fn register_builtin_module(ctx: &mut Context) {
-    let module = ctx.modules.new_module("builtin").unwrap();
-    module
+    ctx.modules
+        .new_module("builtin")
+        .unwrap()
         .with_function(builtin_fn_v2!("typeof", |&ctx, v: any| Ok(v
             .ty()
             .to_string())))
         .with_function(builtin_fn_v2!("to_string", |&ctx, v: any| {
-            Ok(v.display_string(ctx))
+            Ok(v.plain_string(ctx))
         }));
 
-    operators::register(module);
-    math::register(module);
-    collections::register(module);
-    units::register(module);
-    io::register(module);
-    encoding::register(module);
+    collections::register(ctx);
+    encoding::register(ctx);
+    file::register(ctx);
+    io::register(ctx);
+    math::register(ctx);
+    operators::register(ctx);
+    units::register(ctx);
 }

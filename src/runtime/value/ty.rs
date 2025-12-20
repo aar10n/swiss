@@ -22,7 +22,7 @@ pub enum Ty {
     Str,
     Num,
     Function,
-    Io,
+    Handle(Ustr),
     Dim(Dim),
     List,
     Object,
@@ -77,7 +77,7 @@ impl Ty {
             }
             (Ty::Ref(a), Ty::Ref(b)) => Ty::unify(ctx, a, b).map(Box::new).map(Ty::Ref),
             (Ty::Function, Ty::Function) => Ok(Ty::Function),
-            (Ty::Io, Ty::Io) => Ok(Ty::Io),
+            (Ty::Handle(a), Ty::Handle(b)) if a == b => Ok(Ty::Handle(a.clone())),
             (a, b) if a == b => Ok(a.clone()),
             _ => Err(Exception::new(
                 "TypeError",
@@ -102,7 +102,7 @@ impl ToString for Ty {
             Ty::Int => "int".to_owned(),
             Ty::Str => "str".to_owned(),
             Ty::Function => "fn".to_owned(),
-            Ty::Io => "io".to_owned(),
+            Ty::Handle(tag) => tag.to_string(),
             Ty::Num => "num".to_owned(),
             Ty::Dim(dim) => dim.to_string(),
             Ty::List => "list".to_owned(),
@@ -141,7 +141,7 @@ impl PrettyPrint<Context> for Ty {
             Ty::Int => write!(out, "{ATTR}int{RESET}"),
             Ty::Str => write!(out, "{ATTR}str{RESET}"),
             Ty::Function => write!(out, "{ATTR}fn{RESET}"),
-            Ty::Io => write!(out, "{ATTR}io{RESET}"),
+            Ty::Handle(tag) => write!(out, "{ATTR}{}{RESET}", tag),
             Ty::Num => write!(out, "{ATTR}num{RESET}"),
             Ty::Dim(dim) => write!(out, "{LBRAC}{}{RBRAC}", dim.pretty_string(ctx)),
             Ty::List => write!(out, "{ATTR}list{RESET}"),
@@ -316,10 +316,30 @@ impl CastInto<super::super::IoHandle> for Value {
     fn cast(ctx: &Context, value: Value) -> Result<super::super::IoHandle, Exception> {
         match value {
             Value::Ref(r) => CastInto::<super::super::IoHandle>::cast(ctx, r.borrow().clone()),
-            Value::Io(io) => Ok(io),
+            Value::Handle(h) => {
+                let io_ref = h.borrow::<super::super::IoHandle>("io".into(), ctx)?;
+                Ok(io_ref.clone())
+            }
             v => Err(Exception::new(
                 "TypeError",
                 format!("expected io handle, found {}", v.ty().pretty_string(ctx)),
+            )
+            .with_backtrace(ctx.backtrace())),
+        }
+    }
+}
+
+impl CastInto<super::super::FileHandle> for Value {
+    fn cast(ctx: &Context, value: Value) -> Result<super::super::FileHandle, Exception> {
+        match value {
+            Value::Ref(r) => CastInto::<super::super::FileHandle>::cast(ctx, r.borrow().clone()),
+            Value::Handle(h) => {
+                let file_ref = h.borrow::<super::super::FileHandle>("file".into(), ctx)?;
+                Ok(file_ref.clone())
+            }
+            v => Err(Exception::new(
+                "TypeError",
+                format!("expected file handle, found {}", v.ty().pretty_string(ctx)),
             )
             .with_backtrace(ctx.backtrace())),
         }
@@ -553,7 +573,7 @@ pub mod coerce {
                 }
             }
             Ty::Function => v,
-            Ty::Io => v,
+            Ty::Handle(_) => v,
             Ty::List | Ty::Tuple(_) => v,
             Ty::Object => v,
             Ty::Unit => v,

@@ -2,8 +2,9 @@ use crate::print::PrettyString;
 use crate::runtime::{Context, Conversion, Dim, Exception, Module, Quantity, Ty, Value, ValueRef};
 use ustr::Ustr;
 
-pub(super) fn register(module: &mut Module) {
-    module
+pub(super) fn register(ctx: &mut Context) {
+    ctx.get_module_mut("builtin")
+        .expect("builtin module should exist")
         .with_interface(builtin_interface![
             "UnitImpl"
             to_base: (num) -> num;

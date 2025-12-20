@@ -1,5 +1,6 @@
 use super::encoding::EncodingRegistry;
 use super::exception::StackFrame;
+use super::handle::HandleMethodRegistry;
 use super::module::{Module, ModuleId, ModuleMap};
 use super::operator::{OpAssoc, OpKind, Operator, OperatorTable};
 use super::path::{PathLike, PathTree};
@@ -32,6 +33,7 @@ pub struct Context {
     // returns None).
     pub last_value: Option<Value>,
     pub encodings: EncodingRegistry,
+    pub handle_methods: HandleMethodRegistry,
 
     active_module: Option<ModuleId>,
     call_stack: Vec<StackFrame>,
@@ -50,6 +52,7 @@ impl Context {
             default_formatter: None,
             last_value: None,
             encodings: EncodingRegistry::new(),
+            handle_methods: HandleMethodRegistry::new(),
 
             active_module: None,
             call_stack: Vec::new(),
@@ -187,9 +190,12 @@ impl Context {
     where
         Ctx: ContextProvider,
     {
+        let scope_offset = ctx.context().local_scopes.len();
         ctx.context_mut().push_local_scope(scope);
         let result = f(ctx);
-        ctx.context_mut().pop_local_scope();
+        while ctx.context().local_scopes.len() > scope_offset {
+            ctx.context_mut().pop_local_scope();
+        }
         result
     }
 
@@ -215,6 +221,12 @@ impl Context {
 
         ctx.context_mut().call_stack.pop();
         result
+    }
+
+    /// Best-effort cleanup of reference cycles. Runs a lightweight mark/sweep
+    /// that clears unreachable list/object contents so refcounts can drop.
+    pub fn collect_cycles(&mut self) {
+        crate::runtime::collect_cycles(self);
     }
 }
 
@@ -339,6 +351,10 @@ impl LocalScope {
         for (name, value) in vars {
             self.insert(name, value);
         }
+    }
+
+    pub fn vars(&self) -> &UstrMap<ValueRef> {
+        &self.vars
     }
 }
 

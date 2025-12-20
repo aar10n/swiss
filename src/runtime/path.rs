@@ -33,6 +33,10 @@ impl<T: From<(usize, Ustr)>> PathTree<T> {
         self.items.len()
     }
 
+    pub fn items(&self) -> &[T] {
+        &self.items
+    }
+
     pub fn get(&self, path: impl PathLike) -> Result<(&T, PathTreeIndex), Spanned<String>> {
         let node = self.get_node(path.clone())?;
         let node = node.borrow();
@@ -239,7 +243,7 @@ impl PathLike for &str {
         self.split("::").count()
     }
     fn is_empty(&self) -> bool {
-        self.is_empty()
+        str::is_empty(self)
     }
     fn parts(&self) -> SmallVec<[Spanned<Ustr>; 4]> {
         self.split("::")

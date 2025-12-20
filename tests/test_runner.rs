@@ -17,6 +17,7 @@ pub struct TestCase {
     pub input: String,
     pub expect_type: ExpectType,
     pub expected: String,
+    pub workdir: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -36,6 +37,7 @@ pub struct TestFile {
     pub include_file: Option<String>,
     pub setup_code: Option<String>,
     pub test_cases: Vec<TestCase>,
+    pub workdir: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -111,11 +113,14 @@ impl TestRunner {
             include: Option<String>,
             setup: Option<String>,
             swiss_bin: PathBuf,
+            workdir: PathBuf,
         }
 
         let mut tasks: Vec<Task> = Vec::new();
         let mut per_file_counts: Vec<usize> = Vec::new();
         let mut per_file_names: Vec<PathBuf> = Vec::new();
+
+        let runner_cwd = env::current_dir()?;
 
         for (_entry_idx, path) in entries.into_iter().enumerate() {
             let file_name = path
@@ -136,18 +141,30 @@ impl TestRunner {
 
             let content = fs::read_to_string(&path)?;
             let parsed = self.parse_test_file(&content)?;
+            let file_dir = path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| PathBuf::from("."));
             let file_idx = per_file_names.len();
             per_file_counts.push(parsed.test_cases.len());
             per_file_names.push(path.clone());
+            let include = resolve_include_path(&runner_cwd, parsed.include_file.as_deref());
 
             for (case_idx, test_case) in parsed.test_cases.into_iter().enumerate() {
+                let workdir = resolve_workdir(
+                    &runner_cwd,
+                    &file_dir,
+                    parsed.workdir.as_deref(),
+                    test_case.workdir.as_deref(),
+                );
                 tasks.push(Task {
                     file_idx,
                     case_idx,
                     test_case,
-                    include: parsed.include_file.clone(),
+                    include: include.clone(),
                     setup: parsed.setup_code.clone(),
                     swiss_bin: swiss_bin.clone(),
+                    workdir,
                 });
             }
         }
@@ -199,6 +216,7 @@ impl TestRunner {
                         &task.include,
                         &task.setup,
                         &task.swiss_bin,
+                        &task.workdir,
                     ) {
                         Ok(outcome) => outcome,
                         Err(err) => CaseResult::Failed {
@@ -304,7 +322,6 @@ impl TestRunner {
     }
 
     #[allow(dead_code)]
-    #[allow(dead_code)]
     pub fn run_test_file(
         &self,
         path: &Path,
@@ -313,14 +330,27 @@ impl TestRunner {
         let test_file = self.parse_test_file(&content)?;
         let mut results = Vec::new();
         let swiss_bin = resolve_swiss_bin()?;
+        let runner_cwd = env::current_dir()?;
+        let file_dir = path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        let include = resolve_include_path(&runner_cwd, test_file.include_file.as_deref());
 
         for test_case in test_file.test_cases {
+            let workdir = resolve_workdir(
+                &runner_cwd,
+                &file_dir,
+                test_file.workdir.as_deref(),
+                test_case.workdir.as_deref(),
+            );
             let passed = matches!(
                 self.run_test_case(
                     &test_case,
-                    &test_file.include_file,
+                    &include,
                     &test_file.setup_code,
                     &swiss_bin,
+                    &workdir,
                 )?,
                 CaseResult::Passed
             );
@@ -333,8 +363,10 @@ impl TestRunner {
     fn parse_test_file(&self, content: &str) -> Result<TestFile, Box<dyn std::error::Error>> {
         let mut include_file = None;
         let mut setup_code = None;
+        let mut suite_workdir = None;
         let mut test_cases = Vec::new();
         let mut lines = content.lines().peekable();
+        let mut seen_test = false;
 
         while let Some(line) = lines.next() {
             let line = line.trim();
@@ -346,6 +378,11 @@ impl TestRunner {
 
             if line.starts_with("INCLUDE:") {
                 include_file = Some(line[8..].trim().to_string());
+            } else if line.starts_with("WORKDIR:") {
+                if seen_test {
+                    return Err("WORKDIR must appear before any TEST cases".into());
+                }
+                suite_workdir = Some(line[8..].trim().to_string());
             } else if line.starts_with("SETUP:") {
                 // Parse multi-line setup code
                 let first_line = line[6..].trim();
@@ -363,6 +400,7 @@ impl TestRunner {
                         // Stop at TEST:, INCLUDE:, or comment lines
                         if next_line_trimmed.starts_with("TEST:")
                             || next_line_trimmed.starts_with("INCLUDE:")
+                            || next_line_trimmed.starts_with("WORKDIR:")
                             || next_line_trimmed.starts_with("//")
                         {
                             break;
@@ -385,10 +423,12 @@ impl TestRunner {
                     setup_code = Some(setup_lines.join("\n"));
                 }
             } else if line.starts_with("TEST:") {
+                seen_test = true;
                 let test_name = line[5..].trim().to_string();
                 let mut input = String::new();
                 let mut expect_type = ExpectType::Output;
                 let mut expected = String::new();
+                let mut workdir = None;
 
                 // Parse the test case body
                 while let Some(&next_line) = lines.peek() {
@@ -408,6 +448,7 @@ impl TestRunner {
                                 let next_line = next_line.trim();
                                 if next_line.starts_with("EXPECT:")
                                     || next_line.starts_with("EXPECT_ERROR:")
+                                    || next_line.starts_with("WORKDIR:")
                                     || next_line.starts_with("TEST:")
                                 {
                                     break;
@@ -450,6 +491,8 @@ impl TestRunner {
                             // Single-line input
                             input = first_line.to_string();
                         }
+                    } else if line.starts_with("WORKDIR:") {
+                        workdir = Some(line[8..].trim().to_string());
                     } else if line.starts_with("EXPECT:") {
                         expect_type = ExpectType::Output;
                         expected = line[7..].trim().to_string();
@@ -465,6 +508,7 @@ impl TestRunner {
                         input,
                         expect_type,
                         expected,
+                        workdir,
                     });
                 }
             }
@@ -474,6 +518,7 @@ impl TestRunner {
             include_file,
             setup_code,
             test_cases,
+            workdir: suite_workdir,
         })
     }
 
@@ -483,6 +528,7 @@ impl TestRunner {
         include_file: &Option<String>,
         setup_code: &Option<String>,
         swiss_bin: &Path,
+        workdir: &Path,
     ) -> Result<CaseResult, Box<dyn std::error::Error>> {
         let mut args: Vec<String> = vec![];
         if let Some(include) = include_file {
@@ -518,6 +564,7 @@ impl TestRunner {
         // Use stdin for all inputs - Swiss now properly handles this
         let mut cmd = Command::new(swiss_bin);
         cmd.args(&args);
+        cmd.current_dir(workdir);
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
@@ -705,10 +752,48 @@ fn format_failure_summary(
     blocks.join("\n\n")
 }
 
+fn resolve_workdir(
+    runner_cwd: &Path,
+    file_dir: &Path,
+    suite_workdir: Option<&str>,
+    case_workdir: Option<&str>,
+) -> PathBuf {
+    let raw = case_workdir.or(suite_workdir);
+    match raw {
+        None => runner_cwd.to_path_buf(),
+        Some(raw) => {
+            let substituted = raw.replace("${FILE_DIR}", &file_dir.to_string_lossy());
+            let path = PathBuf::from(substituted);
+            if path.is_absolute() {
+                path
+            } else {
+                runner_cwd.join(path)
+            }
+        }
+    }
+}
+
+fn resolve_include_path(runner_cwd: &Path, include: Option<&str>) -> Option<String> {
+    include.map(|path| {
+        let include_path = PathBuf::from(path);
+        let resolved = if include_path.is_absolute() {
+            include_path
+        } else {
+            runner_cwd.join(include_path)
+        };
+        resolved.to_string_lossy().to_string()
+    })
+}
+
 fn resolve_swiss_bin() -> Result<PathBuf, Box<dyn Error>> {
     // Prefer cargo-provided env var if available
     if let Ok(bin) = env::var("CARGO_BIN_EXE_swiss") {
-        return Ok(PathBuf::from(bin));
+        let path = PathBuf::from(bin);
+        return Ok(if path.is_absolute() {
+            path
+        } else {
+            env::current_dir()?.join(path)
+        });
     }
 
     // Fallback to target/debug/swiss
@@ -721,7 +806,7 @@ fn resolve_swiss_bin() -> Result<PathBuf, Box<dyn Error>> {
             return Err("failed to build swiss binary".into());
         }
     }
-    Ok(path)
+    Ok(env::current_dir()?.join(path))
 }
 
 fn strip_ansi_codes(input: &str) -> String {

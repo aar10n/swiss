@@ -6,13 +6,14 @@ use serde_json::{self, Number as JsonNumber, Value as JsonValue};
 use std::str::FromStr;
 use ustr::Ustr;
 
-pub(super) fn register(module: &mut Module) {
+pub(super) fn register(ctx: &mut Context) {
     let encoding_interface = builtin_interface!["encoding"
         encode: (any) -> str;
         decode: (str) -> any;
     ];
 
-    module
+    ctx.get_module_mut("builtin")
+        .expect("builtin module should exist")
         .with_interface(encoding_interface)
         .with_function(
             builtin_fn_v2!("register_encoding", |&ctx, name: str, encode_fn: fn, decode_fn: fn| {
