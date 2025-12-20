@@ -35,14 +35,20 @@ impl SourceMap {
         let source = SourceFile::from_file(file_name)?;
         let id = source.id();
         self.sources.insert(id, source);
+        self.names.insert(file_name.to_owned(), id);
         Ok(id)
     }
 
     pub fn add_source(&mut self, name: String, source: String) -> SourceId {
         let id = source_id::next();
-        let file = SourceFile::new(id, name, source);
+        let file = SourceFile::new(id, name.clone(), source);
         self.sources.insert(id, file);
+        self.names.insert(name, id);
         id
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&SourceId, &SourceFile)> {
+        self.sources.iter()
     }
 
     pub fn lookup_span(&self, span: SourceSpan) -> Option<SourceRef> {

@@ -1,11 +1,11 @@
+use super::encoding::EncodingRegistry;
 use super::exception::StackFrame;
 use super::module::{Module, ModuleId, ModuleMap};
-use super::encoding::EncodingRegistry;
 use super::operator::{OpAssoc, OpKind, Operator, OperatorTable};
 use super::path::{PathLike, PathTree};
 use super::unit::{Unit, UnitKind, UnitTable};
 use super::value::{VRef, Value, ValueRef, VarId};
-use super::{builtin, Function, NameError};
+use super::{builtin, DeclError, Function, NameError};
 
 use crate::ast::{BinaryCoercion, Coercion, FloatConversion, NodeId, Path, UnitPreference, P};
 use crate::source::{SourceId, SourceMap, SourceProvider, SourceSpan, Spanned};
@@ -22,6 +22,7 @@ pub struct Context {
     pub config: RuntimeConfig,
     pub sources: SourceMap,
     pub modules: ModuleMap,
+    pub prelude_modules: Vec<ModuleId>,
 
     // Captured output from formatters. When set, the driver will prefer printing
     // this buffer over the raw value display.
@@ -43,6 +44,7 @@ impl Context {
             config: RuntimeConfig::default(),
             sources: SourceMap::new(),
             modules: ModuleMap::new(),
+            prelude_modules: Vec::new(),
 
             pending_output: None,
             default_formatter: None,
@@ -90,6 +92,60 @@ impl Context {
 
     pub fn last_frame(&self) -> Option<&StackFrame> {
         self.call_stack.last()
+    }
+
+    /// Apply the cached prelude declarations to the given module, seeding
+    /// operator/unit/dimension/interface tables so parsing works the same
+    /// across modules.
+    pub fn apply_preludes_to_module(&mut self, module_id: ModuleId) -> Result<(), DeclError> {
+        if self.modules[module_id].prelude_applied {
+            return Ok(());
+        }
+
+        // Snapshot prelude syntax declarations before we mutably borrow the
+        // target module.
+        let prelude_ids = self.prelude_modules.clone();
+        let snapshots = prelude_ids
+            .iter()
+            .map(|pid| {
+                let prelude = &self.modules[*pid];
+                (
+                    prelude.units.iter().cloned().collect::<Vec<_>>(),
+                    prelude.operators.iter().cloned().collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let module = &mut self.modules[module_id];
+        if module.prelude_applied {
+            return Ok(());
+        }
+
+        for pid in &self.prelude_modules {
+            if !module.opened.contains(pid) {
+                module.opened.push(*pid);
+            }
+        }
+
+        // For parsing support, copy only syntax-level declarations (operators and
+        // units/suffixes) from preludes so the parser can recognize them in this
+        // module's source.
+        for (prelude_units, prelude_ops) in snapshots {
+            for unit in prelude_units {
+                if module.units.get(unit.name.raw).is_none() {
+                    module.register_unit(unit)?;
+                }
+            }
+
+            for op in prelude_ops {
+                if module.operators.get(op.kind, op.name.raw).is_none() {
+                    module.register_operator(op)?;
+                }
+            }
+        }
+
+        module.prelude_applied = true;
+        Ok(())
     }
 
     // MARK: Local  Scopes
@@ -181,23 +237,21 @@ impl Context {
 
     pub fn resolve_variable(&mut self, path: impl PathLike) -> Result<ValueRef, NameError> {
         let name = path.base_part();
-        let module = if path.len() == 1 {
+        let module_id = if path.len() == 1 {
             for scope in self.local_scopes.iter().rev() {
                 if let Some(vref) = scope.vars.get(&name.raw).cloned() {
                     return Ok(vref);
                 }
             }
-
-            self.active_module().unwrap()
+            self.active_module().unwrap().id
         } else {
-            self.modules.get_module(path.dir_parts())?
+            self.modules.get_module(path.dir_parts())?.id
         };
 
-        match module.resolve_constant(name.clone()) {
+        match self.modules.resolve_constant_in(module_id, name.clone()) {
             Ok(c) => Ok(c.value.clone()),
             Err(_) => {
-                // Allow functions to be treated as first-class values when referenced in expression position.
-                if let Ok(func) = module.resolve_function(name.clone()) {
+                if let Ok(func) = self.modules.resolve_function_in(module_id, name.clone()) {
                     Ok(ValueRef::new_const(Value::Function(func.clone())))
                 } else {
                     Err(NameError::new("undefined", name.to_string_inner()))
@@ -207,15 +261,16 @@ impl Context {
     }
 
     pub fn resolve_function(&self, path: impl PathLike) -> Result<&Function, NameError> {
-        if path.len() == 1 {
-            self.active_module()
-                .unwrap()
-                .resolve_function(path.base_part())
+        let (module_id, name) = if path.len() == 1 {
+            (self.active_module().unwrap().id, path.base_part())
         } else {
-            self.modules
-                .get_module(path.dir_parts())?
-                .resolve_function(path.base_part())
-        }
+            (
+                self.modules.get_module(path.dir_parts())?.id,
+                path.base_part(),
+            )
+        };
+
+        self.modules.resolve_function_in(module_id, name)
     }
 }
 
@@ -240,6 +295,9 @@ pub struct RuntimeConfig {
     pub float_conversion: FloatConversion,
     /// Result unit selection for binary operations.
     pub unit_preference: UnitPreference,
+
+    /// Prelude files to load automatically.
+    pub prelude_files: Vec<String>,
 }
 
 impl Default for RuntimeConfig {
@@ -251,6 +309,7 @@ impl Default for RuntimeConfig {
             float_precision: 53,
             float_conversion: FloatConversion::default(),
             unit_preference: UnitPreference::Left,
+            prelude_files: Vec::new(),
         }
     }
 }

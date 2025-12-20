@@ -1,3 +1,5 @@
+use crate::print::{DisplayString, PrettyString};
+
 pub(super) use super::context::Context;
 pub(super) use super::exception::Exception;
 pub(super) use super::module::Module;
@@ -197,25 +199,47 @@ macro_rules! builtin_interface {
     };
 }
 
-mod helpers;
-mod operators;
-mod math;
 mod collections;
-mod units;
-mod io;
 mod encoding;
-
-pub(crate) use helpers::{take_arg, take_varargs};
+mod io;
+mod math;
+mod operators;
+mod units;
 
 pub type NativeFn = fn(&mut Context, Vec<Value>) -> Result<Value, Exception>;
 
+pub(crate) fn take_arg<T: CastFrom<Value>>(
+    ctx: &Context,
+    param: &str,
+    args: &mut Vec<Value>,
+) -> Result<T, Exception> {
+    if args.is_empty() {
+        Err(
+            Exception::new("TypeError", format!("missing argument: {}", param))
+                .with_backtrace(ctx.backtrace()),
+        )
+    } else {
+        T::cast(ctx, args.remove(0))
+    }
+}
+
+pub(crate) fn take_varargs(ctx: &Context, args: &mut Vec<Value>) -> Result<Vec<Value>, Exception> {
+    Ok(args.drain(..).collect())
+}
+
 pub fn register_builtin_module(ctx: &mut Context) {
     let module = ctx.modules.new_module("builtin").unwrap();
+    module
+        .with_function(builtin_fn_v2!("typeof", |&ctx, v: any| Ok(v
+            .ty()
+            .to_string())))
+        .with_function(builtin_fn_v2!("to_string", |&ctx, v: any| {
+            Ok(v.display_string(ctx))
+        }));
 
     operators::register(module);
     math::register(module);
     collections::register(module);
-    helpers::register(module);
     units::register(module);
     io::register(module);
     encoding::register(module);

@@ -1,0 +1,77 @@
+INCLUDE: prelude.ch
+
+TEST: Integer decimal
+INPUT: 42
+EXPECT: 42
+
+TEST: Integer hex
+INPUT: 0x2A
+EXPECT: 42
+
+TEST: Integer binary
+INPUT: 0b1010
+EXPECT: 10
+
+TEST: Integer underscores
+INPUT: 1_234_567
+EXPECT: 1234567
+
+TEST: Hex underscores
+INPUT: 0xFF_FF
+EXPECT: 65535
+
+TEST: Binary underscores
+INPUT: 0b1010_1010
+EXPECT: 170
+
+TEST: Float exponent
+INPUT: 1.5e2
+EXPECT: 150
+
+TEST: Float underscores
+INPUT: 1_234.5_6
+EXPECT: 1234.56
+
+TEST: Bool true
+INPUT: true
+EXPECT: true
+
+TEST: Bool false
+INPUT: false
+EXPECT: false
+
+TEST: String newline
+INPUT: "a\nb"
+EXPECT: "a\nb"
+
+TEST: String bell
+INPUT: "a\ab"
+EXPECT: "a\u{7}b"
+
+TEST: String backspace
+INPUT: "a\bb"
+EXPECT: "a\u{8}b"
+
+TEST: String formfeed
+INPUT: "a\fb"
+EXPECT: "a\u{c}b"
+
+TEST: String vert tab
+INPUT: "a\vb"
+EXPECT: "a\u{b}b"
+
+TEST: String null
+INPUT: "a\0b"
+EXPECT: "a\0b"
+
+TEST: String hex escape
+INPUT: "\x41\x42"
+EXPECT: "AB"
+
+TEST: String unicode escape
+INPUT: "\u0041\u03A9"
+EXPECT: "AΩ"
+
+TEST: Invalid escape
+INPUT: "bad\z"
+EXPECT_ERROR: invalid escape sequence

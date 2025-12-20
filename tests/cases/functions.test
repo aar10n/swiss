@@ -1,5 +1,8 @@
 INCLUDE: prelude.ch
 
+
+// hello 
+
 TEST: List length
 INPUT: len([1, 2, 3])
 EXPECT: 3
@@ -15,6 +18,18 @@ EXPECT: 5
 TEST: Invalid length
 INPUT: len(5)
 EXPECT_ERROR: Exception: cannot get length of type: int
+
+TEST: Reverse list
+INPUT: reverse([1, 2, 3])
+EXPECT: [3, 2, 1]
+
+TEST: Reverse tuple
+INPUT: reverse((1, 2, 3))
+EXPECT: (3, 2, 1)
+
+TEST: Reverse string
+INPUT: reverse("abc")
+EXPECT: "cba"
 
 TEST: Sum zero
 INPUT: sum()

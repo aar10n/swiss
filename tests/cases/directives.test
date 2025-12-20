@@ -1,0 +1,26 @@
+INCLUDE: prelude.ch
+
+TEST: Directive at EOF
+INPUT: #[float_precision=32]
+EXPECT: ()
+
+TEST: Float precision valid
+INPUT: {
+  #[float_precision=128]
+  1 + 2
+}
+EXPECT: 3
+
+TEST: Float precision zero
+INPUT: {
+  #[float_precision=0]
+  1 + 2
+}
+EXPECT_ERROR: float_precision must be between 1 and 1024
+
+TEST: Float precision too large
+INPUT: {
+  #[float_precision=2048]
+  1 + 2
+}
+EXPECT_ERROR: float_precision must be between 1 and 1024

@@ -1,4 +1,35 @@
 ;
+; Runtime Config
+;
+
+; Sets the precision used for floating point calculations. N <u32>
+;   (0 > N <= 1024)
+#[float_precision=53]
+
+; Controls how floats are converted to integers.
+;   trunc  - Truncate towards zero.
+;   round  - Round to the nearest integer.
+#[float_conversion="round"]
+
+; Controls type coercion.
+;   auto  - Coerce types automatically.
+;   never - Never coerce types.
+#[coercion="auto"]
+
+; Controls the behavior of type coercion in most binary operators.
+;   left          - Coerce the rhs to the type of the lhs.
+;   right         - Coerce the lhs to the type of the rhs.
+;   float_or_left - If any side is a float, coerce the other side to it. (or left)
+;   int_or_left   - If any side is an int, coerce the other side to it. (or left)
+#[binary_coercion="float_or_left"]
+
+; Controls from where the unit for results of quantity operations should be taken.
+;   left  - Take the unit from the left side.
+;   right - Take the unit from the right side.
+#[unit_preference="left"]
+
+
+;
 ; Operators
 ;
 
@@ -16,50 +47,50 @@
 
 #[associativity="right"]
 #[precedence=0]
+infix operator (//)(any,fn) = builtin::format_apply
+#[precedence=1]
 infix operator (+=)(&num,num) = builtin::add_assign
 infix operator (-=)(&num,num) = builtin::sub_assign
 infix operator (*=)(&num,num) = builtin::mul_assign
 infix operator (/=)(&num,num) = builtin::div_assign
 #[associativity="left"]
-#[precedence=1]
+#[precedence=2]
 infix operator (==)(num,num) = builtin::eq
 infix operator (!=)(num,num) = builtin::ne
-#[precedence=2]
+#[precedence=3]
 infix operator (<)(num,num) = builtin::lt
 infix operator (>)(num,num) = builtin::gt
 infix operator (<=)(num,num) = builtin::le
 infix operator (>=)(num,num) = builtin::ge
-#[precedence=3]
-infix operator (||)(num,num) = builtin::or
 #[precedence=4]
-infix operator (&&)(num,num) = builtin::and
+infix operator (||)(num,num) = builtin::or
 #[precedence=5]
+infix operator (&&)(num,num) = builtin::and
+#[precedence=6]
 infix operator (<<)(num,num) = builtin::bit_shl
 infix operator (>>)(num,num) = builtin::bit_shr
-#[precedence=6]
-infix operator (//)(any,fn) = builtin::format_apply
 ; ------------------------
 #[associativity="right"]
-#[precedence=6]
+#[precedence=7]
 prefix operator (+)(num) = builtin::pos
 prefix operator (-)(num) = builtin::neg
 prefix operator (!)(num) = builtin::not
 prefix operator (~)(num) = builtin::bit_not
 ; ------------------------
 #[associativity="left"]
-#[precedence=7]
+#[precedence=8]
 infix operator (+)(num,num) = builtin::add
 infix operator (-)(num,num) = builtin::sub
 infix operator (|)(num,num) = builtin::bit_or
-#[precedence=8]
+#[precedence=9]
 infix operator (*)(num,num) = builtin::mul
 infix operator (/)(num,num) = builtin::div
 infix operator (%)(num,num) = builtin::mod
 infix operator (&)(num,num) = builtin::bit_and
 ; ------------------------
-#[precedence=9]
-infix operator (^)(num,num) = builtin::pow
 #[precedence=10]
+infix operator (^)(num,num) = builtin::pow
+#[precedence=11]
 infix operator ([])(any,any) = builtin::index
 infix operator (->)(num,unit) = builtin::unit_cast
 
@@ -144,7 +175,7 @@ unit microampere{μA,uA} = 1e-6 I
 ; ============================================
 
 unit degreeC{°C,dC} [Θ] = {
-  fn display_name() { "°C" }
+  fn display_name() { "°C\x1B" }
   fn to_base(c) { c + 273.15 }
   fn from_base(k) { k - 273.15 }
 }
@@ -229,16 +260,6 @@ unit mebibyte{MiB} [Data] = 1048576
 unit gibibyte{GiB} [Data] = 1073741824
 unit tebibyte{TiB} [Data] = 1099511627776
 
-fn fmt_stdout(v: any, io) {
-  builtin::write(io, v)
-}
-#[default_formatter=fmt_stdout]
-
-fn json_encode(value) { builtin::json_encode(value) }
-fn json_decode(text) { builtin::json_decode(text) }
-
-builtin::register_encoding("json", json_encode, json_decode)
-
 ;
 ; Constants
 ;
@@ -248,7 +269,7 @@ const e = 2.71828182845904523536
 const phi = 1.61803398874989484820
 
 ;
-; Functions
+; General Functions
 ;
 
 fn len(v: any) { builtin::len(v) }
@@ -257,8 +278,29 @@ fn reverse(v: any) { builtin::reverse(v) }
 fn delete(obj: object, key: str) { builtin::delete(obj, key) }
 fn append(list: list, item: any) { builtin::append(list, item) }
 
+fn write(io, v: any) { builtin::write(io, v) }
+fn writeln(io, v: any) { builtin::writeln(io, v) }
+
+fn json_encode(value) { builtin::json_encode(value) }
+fn json_decode(text) { builtin::json_decode(text) }
+builtin::register_encoding("json", json_encode, json_decode)
+
 fn encode(name, value) { builtin::encode(name, value) }
 fn decode(name, text) { builtin::decode(name, text) }
+
+fn fmt_plain(v: any, io) {
+  write(io, builtin::to_string(v))
+}
+
+fn fmt_stdout(v: any, io) {
+  write(io, "\x1B[32mRESULT:\x1B[0m ")
+  write(io, builtin::to_string(v))
+}
+#[default_formatter=fmt_stdout]
+
+;
+; Math Functions
+;
 
 fn abs(x: num) { if x < 0 { -x } else { x } }
 fn sign(x: num) { if x < 0 { -1 } else { if x > 0 { 1 } else { 0 } } }
@@ -319,6 +361,10 @@ fn align_down(x: num, a: num) {
     x & ~(a - 1)
   }
 }
+
+;
+; Collection Functions
+;
 
 fn contains(l: list, v: any) {
   for item := range l {

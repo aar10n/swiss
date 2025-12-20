@@ -369,6 +369,23 @@ impl NameTable {
             None => NameResult::None,
         }
     }
+
+    pub fn iter_constants(&self) -> impl Iterator<Item = &Constant> {
+        self.names.values().filter_map(|entry| match entry {
+            Left(c) => Some(c),
+            Right(_) => None,
+        })
+    }
+
+    pub fn iter_functions(&self) -> impl Iterator<Item = &Function> {
+        self.names
+            .values()
+            .filter_map(|entry| match entry {
+                Left(_) => None,
+                Right(funcs) => Some(funcs.iter()),
+            })
+            .flatten()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -377,4 +394,20 @@ pub enum NameResult<'a> {
     Function(&'a Function),
     Ambiguous(&'a Vec<Function>),
     None,
+}
+
+impl<'a> NameResult<'a> {
+    pub fn into_constant(self) -> Option<&'a Constant> {
+        match self {
+            NameResult::Constant(c) => Some(c),
+            _ => None,
+        }
+    }
+
+    pub fn into_function(self) -> Option<&'a Function> {
+        match self {
+            NameResult::Function(f) => Some(f),
+            _ => None,
+        }
+    }
 }

@@ -21,6 +21,11 @@ pub fn eval_source(
     source_id: SourceId,
     module_id: ModuleId,
 ) -> Result<Option<Value>, Error> {
+    // Ensure the module is seeded with prelude declarations before parsing so
+    // operator/unit lookups behave consistently.
+    ctx.apply_preludes_to_module(module_id)
+        .map_err(|e| e.into_error())?;
+
     let tokens = match lexer::lex(source_id, ctx.sources[source_id].raw()) {
         Ok(tokens) => tokens,
         Err(err) => return err.into_error_result(),
@@ -58,4 +63,40 @@ pub fn eval_source(
         Ok(value) => Ok(value),
         Err(err) => Err(err.into_error_ctx(&ctx)),
     }
+}
+
+/// Evaluate all prelude files (if any) and cache their modules in the context.
+pub fn eval_preludes(ctx: &mut Context) -> Result<(), ()> {
+    let prelude_paths = ctx.config.prelude_files.clone();
+    for path in prelude_paths {
+        let source = match std::fs::read_to_string(&path) {
+            Ok(code) => code,
+            Err(err) => {
+                eprintln!("error reading prelude '{}': {:?}", path, err);
+                return Err(());
+            }
+        };
+
+        let source_id = ctx.sources.add_source(path.clone(), source);
+        let module_path = ctx.sources[source_id].module_path();
+
+        let module = match ctx.modules.get_or_add_module(module_path.clone()) {
+            Ok(module) => module,
+            Err(err) => {
+                let _ = err.into_error().print_stderr(ctx);
+                return Err(());
+            }
+        };
+        let module_id = module.id;
+
+        match eval_source(ctx, source_id, module_id) {
+            Ok(_) => ctx.prelude_modules.push(module_id),
+            Err(err) => {
+                let _ = err.print_stderr(ctx);
+                return Err(());
+            }
+        }
+    }
+
+    Ok(())
 }

@@ -495,8 +495,10 @@ pub mod coerce {
                 // If this dimension has a target unit (e.g., [rad]), perform automatic conversion
                 if let Some(target_unit_info) = &d.unit {
                     // Only handle simple unit conversions here
-                    if let (Some(target_suffix), Some(target_conv)) =
-                        (target_unit_info.simple_unit_name(), target_unit_info.simple_conversion()) {
+                    if let (Some(target_suffix), Some(target_conv)) = (
+                        target_unit_info.simple_unit_name(),
+                        target_unit_info.simple_conversion(),
+                    ) {
                         match v {
                             Value::Quantity(q) => {
                                 // Check dimension compatibility (but don't fail here, type checking will catch mismatches)
@@ -507,14 +509,18 @@ pub mod coerce {
 
                                 // Step 1: Convert to base units if needed
                                 let base_value = if let Some(source_unit_info) = &q.dim.unit {
-                                    if let (Some(source_unit), Some(source_conv)) =
-                                        (source_unit_info.simple_unit_name(), source_unit_info.simple_conversion()) {
+                                    if let (Some(source_unit), Some(source_conv)) = (
+                                        source_unit_info.simple_unit_name(),
+                                        source_unit_info.simple_conversion(),
+                                    ) {
                                         if source_unit == target_suffix {
                                             // Same unit, no conversion needed
                                             q.number.clone()
                                         } else {
                                             // Convert to base units first
-                                            source_conv.to_base(ctx, q.number.clone()).unwrap_or(q.number.clone())
+                                            source_conv
+                                                .to_base(ctx, q.number.clone())
+                                                .unwrap_or(q.number.clone())
                                         }
                                     } else {
                                         // Compound unit - cannot auto-convert
@@ -526,10 +532,13 @@ pub mod coerce {
                                 };
 
                                 // Step 2: Convert from base units to target unit
-                                let target_value = target_conv.from_base(ctx, base_value.clone()).unwrap_or(base_value);
+                                let target_value = target_conv
+                                    .from_base(ctx, base_value.clone())
+                                    .unwrap_or(base_value);
 
                                 // Create new Dim with the target unit
-                                let result_dim = Dim::simple(d.expr.clone(), target_suffix, target_conv.clone());
+                                let result_dim =
+                                    Dim::simple(d.expr.clone(), target_suffix, target_conv.clone());
                                 Value::Quantity(Quantity::new(target_value, result_dim))
                             }
                             _ => v, // Not a quantity, return as-is

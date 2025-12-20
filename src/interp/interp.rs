@@ -1,24 +1,25 @@
 use super::{InterpError, InterpResult, NameError, TypeError, Value};
 
 use crate::ast::*;
-use crate::diag::IntoError;
 use crate::id::VarId;
-use crate::interp::{Exception, VRef};
+use crate::interp::Exception;
 use crate::print::{PrettyPrint, PrettyString};
 use crate::runtime::{
-    self as rt, CastInto, Constant, Context, ContextProvider, Function, LRValue, LocalScope,
-    StackFrame, ValueRef,
+    self as rt, CastInto, Constant, Context, ContextProvider, Function, LRValue, List, LocalScope,
+    ModuleId, PathLike, StackFrame, ValueRef,
 };
-use crate::source::{SourceSpan, Spanned};
+use crate::source::{SourceId, SourceSpan, Spanned};
+use crate::{lexer, parser};
 
 use either::{Either, Left, Right};
 use rug::{Float, Integer};
 use smallvec::{smallvec, SmallVec};
-use std::cell::{Ref, RefCell};
+use std::path::PathBuf;
 use std::rc::Rc;
 use ustr::Ustr;
 
 const TABWIDTH: &str = "    ";
+const MAX_FLOAT_PRECISION: u32 = 1024;
 
 macro_rules! trace {
     ($self:ident, $intrp:expr, $msg:expr, $expr:expr) => {{
@@ -59,6 +60,7 @@ macro_rules! no_trace {
 pub struct Interpreter<'ctx> {
     pub ctx: &'ctx mut Context,
 
+    pub current_source: Option<crate::source::SourceId>,
     pub(crate) trace_on: bool,
     trace_level: usize,
 }
@@ -68,9 +70,15 @@ impl<'ctx> Interpreter<'ctx> {
         Interpreter {
             ctx,
 
+            current_source: None,
             trace_on: std::env::var("TRACE_INTERP").is_ok(),
             trace_level: 0,
         }
+    }
+
+    pub fn with_source(mut self, source_id: SourceId) -> Self {
+        self.current_source = Some(source_id);
+        self
     }
 
     pub fn active_module(&mut self) -> &mut rt::Module {
@@ -83,6 +91,83 @@ impl<'ctx> Interpreter<'ctx> {
             eprintln!("[TRACE] {{{}}} {tab}{}", self.trace_level, msg);
         }
     }
+
+    /// Resolve or load the source file backing an import path.
+    fn resolve_import_source(
+        &mut self,
+        module_path: &SmallVec<[Spanned<Ustr>; 4]>,
+    ) -> InterpResult<SourceId> {
+        // First, see if a source with the same module path is already loaded.
+        if let Some((id, _)) = self
+            .ctx
+            .sources
+            .iter()
+            .find(|(_, file)| paths_match(module_path, &file.module_path()))
+        {
+            return Ok(*id);
+        }
+
+        // Fall back to loading from disk. Use the current file's directory (if known) as the base.
+        let relative = module_path
+            .iter()
+            .map(|part| part.raw.as_str())
+            .collect::<Vec<_>>()
+            .join("/");
+
+        let base_dir = self
+            .current_source
+            .and_then(|sid| {
+                let path = self.ctx.sources[sid].name();
+                let path = std::path::Path::new(path);
+                path.parent().map(|p| p.to_path_buf())
+            })
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+
+        let mut candidate = base_dir.join(&relative);
+        candidate.set_extension("ch");
+        let path_str = candidate.to_string_lossy().to_string();
+
+        self.ctx.sources.load_source(&path_str).map_err(|err| {
+            let err = NameError::new("module not found", module_path.to_spanned_string())
+                .with_extra(err.to_string());
+            InterpError::from(err)
+        })
+    }
+
+    fn import_module(&mut self, path: &Path) -> InterpResult<ModuleId> {
+        let module_path = path.path_parts();
+
+        if let Ok(module) = self.ctx.modules.get_module(module_path.clone()) {
+            return Ok(module.id);
+        }
+
+        let source_id = self.resolve_import_source(&module_path)?;
+        let module_id = {
+            let module = self
+                .ctx
+                .modules
+                .get_or_add_module(module_path.clone())
+                .map_err(InterpError::from)?;
+            module.id
+        };
+
+        // Seed the new module with prelude declarations before parsing.
+        self.ctx.apply_preludes_to_module(module_id)?;
+
+        let tokens = lexer::lex(source_id, self.ctx.sources[source_id].raw())?;
+        let ast_module = {
+            let module = &mut self.ctx.modules[module_id];
+            parser::parse(module, &tokens)?
+        };
+
+        // Evaluate the imported module in its own context first.
+        crate::interp::interpret(self.ctx, &ast_module)?;
+        Ok(module_id)
+    }
+}
+
+fn paths_match(left: &SmallVec<[Spanned<Ustr>; 4]>, right: &SmallVec<[Spanned<Ustr>; 4]>) -> bool {
+    left.len() == right.len() && left.iter().zip(right.iter()).all(|(a, b)| a.raw == b.raw)
 }
 
 impl<'ctx> Interpreter<'ctx> {
@@ -332,9 +417,7 @@ impl<'ctx> Interpreter<'ctx> {
                     match inner_val {
                         Value::List(list) => {
                             // Expand the list into individual arguments
-                            for item in list.borrow().iter() {
-                                variadic.push(item.clone());
-                            }
+                            variadic.extend(list.borrow_slice().iter().cloned());
                         }
                         Value::Tuple(tuple) => {
                             // Expand the tuple into individual arguments
@@ -467,7 +550,7 @@ impl<'ctx> Interpreter<'ctx> {
                 if matches!(&f.kind, FunctionKind::Native(_)) {
                     coerced_values.extend(rest);
                 } else {
-                    coerced_values.push(Value::List(VRef::new(rest)));
+                    coerced_values.push(Value::List(List::new(rest)));
                 }
                 break;
             }
@@ -527,11 +610,11 @@ impl<'ctx> Interpreter<'ctx> {
 /// Convenience for calling a function value from builtin code.
 pub fn call_function(
     ctx: &mut Context,
-    f: Function,
+    f: &Function,
     values: Vec<Value>,
 ) -> Result<Value, Exception> {
     let mut intrp = Interpreter::new(ctx);
-    match intrp.invoke_with_values(&f, values, SourceSpan::default()) {
+    match intrp.invoke_with_values(f, values, SourceSpan::default()) {
         Ok(v) => Ok(v),
         Err(InterpError::Return(v)) => Ok(v),
         Err(InterpError::Exception(e)) => Err(e),
@@ -620,7 +703,10 @@ impl<'ctx> Interp<'ctx, Value> for ListNode<Expr> {
 impl<'ctx> Interp<'ctx, Option<Value>> for Item {
     fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<Option<Value>> {
         match &self.kind {
-            ItemKind::Import(path) => todo!(),
+            ItemKind::Import(path) => {
+                intrp.import_module(path)?;
+                Ok(None)
+            }
             ItemKind::Directive(d) => d.eval(intrp).map(|_| None),
             ItemKind::DimDecl(decl) => decl.eval(intrp).map(|_| None),
             ItemKind::UnitDecl(decl) => decl.eval(intrp).map(|_| None),
@@ -644,7 +730,20 @@ impl<'ctx> Interp<'ctx, ()> for Directive {
     fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<()> {
         no_trace! {self, intrp, "Interp::<()>::Directive", {
             match &self.kind {
-                &DirectiveKind::FloatPrecision(prec) => intrp.ctx.config.float_precision = prec,
+                &DirectiveKind::FloatPrecision(prec) => {
+                    if prec == 0 || prec > MAX_FLOAT_PRECISION {
+                        let msg = format!(
+                            "float_precision must be between 1 and {}, got {}",
+                            MAX_FLOAT_PRECISION, prec
+                        );
+                        return Err(
+                            Exception::new("ValueError", msg)
+                                .with_primary_span(self.span())
+                                .into(),
+                        );
+                    }
+                    intrp.ctx.config.float_precision = prec
+                }
                 DirectiveKind::DefaultFormatter(name) => {
                     intrp.ctx.set_default_formatter(name.raw);
                 }
@@ -1048,8 +1147,7 @@ impl<'ctx> Interp<'ctx, LRValue> for Expr {
                                 }
                             };
 
-                            let mut vec_ref = list.borrow_mut();
-                            if idx_usize >= vec_ref.len() {
+                            if list.set(idx_usize, new_val).is_none() {
                                 return Err(InterpError::Exception(
                                     Exception::new(
                                         "IndexError",
@@ -1058,7 +1156,6 @@ impl<'ctx> Interp<'ctx, LRValue> for Expr {
                                     .with_backtrace(intrp.ctx.backtrace()),
                                 ));
                             }
-                            vec_ref[idx_usize] = new_val;
                             Ok(LRValue::R(Value::Empty))
                         }
                         Value::Object(object) => {
@@ -1152,7 +1249,7 @@ impl<'ctx> Interp<'ctx, LRValue> for Expr {
                 ExprKind::ForRange(pat, iter, body) => {
                     let pat = pat.eval(intrp)?;
                     let iter = Interp::<ValueRef>::eval(iter, intrp)?.try_into_list(intrp.ctx)?;
-                    for value in iter.borrow().iter().cloned() {
+                    for value in iter.borrow_slice().iter().cloned() {
                         let scope = LocalScope::from(pat.bind_with(intrp.ctx, value)?.into_iter());
                         match Context::with_scope(intrp, scope, |intrp| Interp::<Value>::eval(body, intrp)) {
                             Ok(_) => {}, // Normal iteration
@@ -1174,7 +1271,7 @@ impl<'ctx> Interp<'ctx, LRValue> for Expr {
                         let value = Interp::<Value>::eval(item, intrp)?;
                         values.push(value.into());
                     }
-                    Ok(LRValue::R(Value::List(VRef::new(values))))
+                    Ok(LRValue::R(Value::List(List::new(values))))
                 }
                 ExprKind::Object(node) => {
                     let mut fields: Vec<(Ustr, Value)> = vec![];
@@ -1288,12 +1385,8 @@ fn apply_slice(
 ) -> Result<Value, InterpError> {
     let (len, slicer): (usize, Box<dyn Fn(usize, usize) -> Value>) = match container {
         Value::List(list) => {
-            let items = list.borrow().clone();
-            let len = items.len();
-            let slicer = move |start, stop| {
-                let slice = items[start..stop].to_vec();
-                Value::list(slice)
-            };
+            let len = list.len();
+            let slicer = move |start, stop| Value::List(list.slice(start, stop));
             (len, Box::new(slicer))
         }
         Value::Tuple(tuple) => {

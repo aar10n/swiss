@@ -5,7 +5,7 @@ mod test_runner;
 
 fn main() {
     if let Err(err) = test_runner::run_cli() {
-        eprintln!("Error: {}", err);
+        eprintln!("{}", err);
         std::process::exit(1);
     }
 }

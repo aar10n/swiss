@@ -120,8 +120,18 @@ pub struct UnitImpl {
 }
 
 impl UnitImpl {
-    pub fn new(module_id: ModuleId, to_base: VarId, from_base: VarId, display_name: Option<VarId>) -> Self {
-        Self { module_id, to_base, from_base, display_name }
+    pub fn new(
+        module_id: ModuleId,
+        to_base: VarId,
+        from_base: VarId,
+        display_name: Option<VarId>,
+    ) -> Self {
+        Self {
+            module_id,
+            to_base,
+            from_base,
+            display_name,
+        }
     }
 
     fn to_base(&self, ctx: &mut Context, x: Number) -> Result<Number, InterpError> {
@@ -160,22 +170,20 @@ impl UnitImpl {
 
     pub fn display_name(&self, ctx: &mut Context) -> Result<Option<String>, InterpError> {
         match self.display_name {
-            Some(display_name_id) => {
-                Context::with_active_module(ctx, self.module_id, |ctx| {
-                    let mut interp = Interpreter::new(ctx);
-                    let value = interp.call_by_id(display_name_id, vec![])?;
-                    match value {
-                        Value::String(s) => Ok(Some(s.to_string())),
-                        _ => Err(InterpError::from(Exception::new(
-                            "TypeError",
-                            format!(
-                                "unit display_name function did not return a string, got {}",
-                                value.pretty_string(&interp.ctx)
-                            ),
-                        ))),
-                    }
-                })
-            }
+            Some(display_name_id) => Context::with_active_module(ctx, self.module_id, |ctx| {
+                let mut interp = Interpreter::new(ctx);
+                let value = interp.call_by_id(display_name_id, vec![])?;
+                match value {
+                    Value::String(s) => Ok(Some(s.to_string())),
+                    _ => Err(InterpError::from(Exception::new(
+                        "TypeError",
+                        format!(
+                            "unit display_name function did not return a string, got {}",
+                            value.pretty_string(&interp.ctx)
+                        ),
+                    ))),
+                }
+            }),
             None => Ok(None),
         }
     }
@@ -213,6 +221,10 @@ impl UnitTable {
 
     pub fn get(&self, name: Ustr) -> Option<&Unit> {
         self.units.get(&name)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Unit> {
+        self.units.values()
     }
 
     pub fn resolve_suffix(&self, suffix: Ustr) -> Option<&Unit> {

@@ -127,10 +127,7 @@ impl ConversionGraph {
             }
         };
 
-        self.edges.insert(
-            (from, to),
-            ConversionEdge { conversion },
-        );
+        self.edges.insert((from, to), ConversionEdge { conversion });
     }
 
     /// Find a conversion path between two units.
@@ -182,25 +179,34 @@ impl ConversionGraph {
         }
 
         // Find conversion edge
-        let edge = self.find_conversion(from, to)
+        let edge = self
+            .find_conversion(from, to)
             .ok_or(ConversionError::IncompatibleUnits { from, to })?;
 
         // Apply conversion
         match &edge.conversion {
-            DirectConversion::Linear { from_scale, to_scale } => {
+            DirectConversion::Linear {
+                from_scale,
+                to_scale,
+            } => {
                 // Convert: (value * from_scale) / to_scale
                 let scaled = Number::safe_mul(ctx, value, from_scale.clone())
                     .map_err(|e| ConversionError::ConversionFailed(e.to_string()))?;
                 Number::safe_div(ctx, scaled, to_scale.clone())
                     .map_err(|e| ConversionError::ConversionFailed(e.to_string()))
             }
-            DirectConversion::ThroughBase { source_to_base, base_to_target } => {
+            DirectConversion::ThroughBase {
+                source_to_base,
+                base_to_target,
+            } => {
                 // Convert to base unit
-                let base_value = source_to_base.to_base(ctx, value)
+                let base_value = source_to_base
+                    .to_base(ctx, value)
                     .map_err(|e| ConversionError::ConversionFailed(e.to_string()))?;
 
                 // Convert from base to target
-                base_to_target.from_base(ctx, base_value)
+                base_to_target
+                    .from_base(ctx, base_value)
                     .map_err(|e| ConversionError::ConversionFailed(e.to_string()))
             }
         }
@@ -221,7 +227,11 @@ impl std::fmt::Display for ConversionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ConversionError::IncompatibleUnits { from, to } => {
-                write!(f, "Cannot convert from {} to {}: incompatible dimensions", from, to)
+                write!(
+                    f,
+                    "Cannot convert from {} to {}: incompatible dimensions",
+                    from, to
+                )
             }
             ConversionError::ConversionFailed(msg) => {
                 write!(f, "Conversion failed: {}", msg)
@@ -274,8 +284,18 @@ mod tests {
         let foot = Ustr::from("foot");
         let dim_l = DimExpr::Dimension(Ustr::from("L"));
 
-        graph.register_unit(meter, dim_l.clone(), Conversion::Scale(Number::Int(1.into())), true);
-        graph.register_unit(kilometer, dim_l.clone(), Conversion::Scale(Number::Int(1000.into())), false);
+        graph.register_unit(
+            meter,
+            dim_l.clone(),
+            Conversion::Scale(Number::Int(1.into())),
+            true,
+        );
+        graph.register_unit(
+            kilometer,
+            dim_l.clone(),
+            Conversion::Scale(Number::Int(1000.into())),
+            false,
+        );
 
         use rug::Float;
         let foot_factor = Number::Float(Float::with_val(53, 0.3048));

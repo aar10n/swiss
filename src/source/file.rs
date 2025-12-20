@@ -200,8 +200,12 @@ fn decode_offset_loc(source: &str, lines: &[(usize, usize)], offset: usize) -> (
         }
     }
     if offset == source.len() {
-        let line = lines.len() as u32;
-        return (line, 1);
+        // Point one column past the last character of the final line.
+        if let Some(&(start, end)) = lines.last() {
+            let line = lines.len() as u32;
+            let last_col = decode_offset_column(&source[start..end], start, end, end - 1);
+            return (line, (last_col + 1) as u32);
+        }
     }
     (0, 0)
 }

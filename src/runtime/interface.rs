@@ -17,7 +17,11 @@ pub struct Interface {
 
 impl Interface {
     pub fn new(name: Spanned<Ustr>, functions: Vec<Function>, optional_functions: UstrSet) -> Self {
-        Self { name, functions, optional_functions }
+        Self {
+            name,
+            functions,
+            optional_functions,
+        }
     }
 
     pub fn validate(&self, ctx: &Context, functions: Vec<&Function>) -> Result<(), Exception> {
@@ -30,7 +34,10 @@ impl Interface {
 
             if !is_optional {
                 // Required function must be present
-                if !functions.iter().any(|f| f.name.raw == expected_func.name.raw) {
+                if !functions
+                    .iter()
+                    .any(|f| f.name.raw == expected_func.name.raw)
+                {
                     return Err(Exception::new(
                         "TypeError",
                         format!(
@@ -138,5 +145,9 @@ impl InterfaceTable {
 
     pub fn get(&self, name: Ustr) -> Option<&Interface> {
         self.interfaces.get(&name)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Interface> {
+        self.interfaces.values()
     }
 }

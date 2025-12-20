@@ -144,10 +144,15 @@ impl UnitInfo {
             (Some(num), Some(denom)) => UnitInfo::Div(Box::new(num), Box::new(denom)),
             (Some(num), None) => num,
             (None, Some(denom)) => UnitInfo::Div(
-                Box::new(UnitInfo::Simple(Ustr::from(""), Conversion::Scale(Number::Int(1.into())))),
-                Box::new(denom)
+                Box::new(UnitInfo::Simple(
+                    Ustr::from(""),
+                    Conversion::Scale(Number::Int(1.into())),
+                )),
+                Box::new(denom),
             ),
-            (None, None) => UnitInfo::Simple(Ustr::from(""), Conversion::Scale(Number::Int(1.into()))),
+            (None, None) => {
+                UnitInfo::Simple(Ustr::from(""), Conversion::Scale(Number::Int(1.into())))
+            }
         }
     }
 
@@ -188,7 +193,7 @@ impl ToString for UnitInfo {
                         // Handle 1 / unit case
                         format!("1 / {}", b.to_string())
                     }
-                    _ => format!("{} / {}", a.to_string(), b.to_string())
+                    _ => format!("{} / {}", a.to_string(), b.to_string()),
                 }
             }
             UnitInfo::Pow(base, exp) => {
@@ -269,8 +274,11 @@ impl Dim {
             (Some(u), None) => Some(u),
             (None, Some(u)) => {
                 let compound = UnitInfo::Div(
-                    Box::new(UnitInfo::Simple(Ustr::from(""), Conversion::Scale(Number::Int(1.into())))),
-                    Box::new(u)
+                    Box::new(UnitInfo::Simple(
+                        Ustr::from(""),
+                        Conversion::Scale(Number::Int(1.into())),
+                    )),
+                    Box::new(u),
                 );
                 Some(compound.simplify())
             }

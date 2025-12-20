@@ -99,6 +99,10 @@ impl OperatorTable {
         self.op_map.get(&(kind, name))
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = &Operator> {
+        self.op_map.values()
+    }
+
     pub fn get_by_name(&self, name: Ustr) -> Vec<&Operator> {
         self.op_map
             .iter()

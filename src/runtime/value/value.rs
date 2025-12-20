@@ -8,7 +8,6 @@ use crate::print::{EvalPrint, PrettyPrint, PrettyString};
 
 use smallvec::SmallVec;
 use std::cell::RefCell;
-use std::rc::Rc;
 use ustr::Ustr;
 
 pub enum LRValue {
@@ -37,9 +36,108 @@ impl PrettyPrint<Context> for LRValue {
 // MARK: Value
 
 #[derive(Clone, Debug)]
+pub struct List {
+    buf: VRef<Vec<Value>>,
+    start: usize,
+    len: usize,
+    uses_full_len: bool,
+}
+
+impl List {
+    pub fn new(values: Vec<Value>) -> Self {
+        let len = values.len();
+        List {
+            buf: VRef::new(values),
+            start: 0,
+            len,
+            uses_full_len: true,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        if self.uses_full_len {
+            self.buf.borrow().len()
+        } else {
+            self.len
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn borrow_slice(&self) -> std::cell::Ref<[Value]> {
+        let start = self.start;
+        let uses_full = self.uses_full_len;
+        let view_len = self.len;
+        std::cell::Ref::map(self.buf.borrow(), move |data| {
+            let end = if uses_full { data.len() } else { start + view_len };
+            &data[start..end]
+        })
+    }
+
+    pub fn get(&self, idx: usize) -> Option<Value> {
+        let len = self.len();
+        (idx < len).then(|| self.buf.borrow()[self.start + idx].clone())
+    }
+
+    pub fn slice(&self, start: usize, stop: usize) -> Self {
+        debug_assert!(start <= stop && stop <= self.len());
+        List {
+            buf: self.buf.clone(),
+            start: self.start + start,
+            len: stop - start,
+            uses_full_len: false,
+        }
+    }
+
+    fn ensure_unique(&mut self) {
+        let data_len = self.buf.borrow().len();
+        let view_len = if self.uses_full_len { data_len } else { self.len };
+        let covering_all = self.start == 0 && view_len == data_len;
+        if !covering_all {
+            let slice = self.borrow_slice().to_vec();
+            self.buf = VRef::new(slice);
+            self.start = 0;
+            self.len = self.buf.borrow().len();
+            self.uses_full_len = true;
+        } else {
+            // Keep view aligned to the full buffer.
+            self.len = data_len;
+            self.uses_full_len = true;
+        }
+    }
+
+    pub fn push(&mut self, value: Value) {
+        self.ensure_unique();
+        self.buf.borrow_mut().push(value);
+        if !self.uses_full_len {
+            self.len += 1;
+        } else {
+            self.len = self.buf.borrow().len();
+        }
+    }
+
+    pub fn set(&mut self, idx: usize, value: Value) -> Option<()> {
+        let len = self.len();
+        if idx >= len {
+            return None;
+        }
+        self.ensure_unique();
+        let abs_idx = self.start + idx;
+        self.buf.borrow_mut()[abs_idx] = value;
+        Some(())
+    }
+
+    pub fn to_vec(&self) -> Vec<Value> {
+        self.borrow_slice().to_vec()
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum Value {
     Ref(ValueRef),
-    List(VRef<Vec<Value>>),
+    List(List),
     Object(VRef<Vec<(Ustr, Value)>>),
     Tuple(SmallVec<[Box<Value>; 3]>),
     Quantity(Quantity),
@@ -54,7 +152,7 @@ pub enum Value {
 
 impl Value {
     pub fn list(values: Vec<Value>) -> Self {
-        Value::List(VRef::new(values))
+        Value::List(List::new(values))
     }
 
     pub fn object(values: Vec<(Ustr, Value)>) -> Self {
@@ -72,7 +170,7 @@ impl Value {
     pub fn is_zero(&self) -> bool {
         match &self {
             Value::Ref(r) => r.borrow().is_zero(),
-            Value::List(l) => l.borrow().is_empty(),
+            Value::List(l) => l.is_empty(),
             Value::Object(o) => o.borrow().is_empty(),
             Value::Tuple(t) => t.is_empty(),
             Value::Quantity(q) => q.is_zero(),
@@ -144,7 +242,7 @@ impl Value {
         }
     }
 
-    pub fn try_into_list(self, ctx: &Context) -> Result<VRef<Vec<Value>>, Exception> {
+    pub fn try_into_list(self, ctx: &Context) -> Result<List, Exception> {
         match self {
             Value::List(l) => Ok(l),
             _ => Err(Exception::new(
@@ -232,7 +330,7 @@ impl PrettyPrint<Context> for Value {
             }
             Value::List(l) => {
                 write!(out, "[")?;
-                for (i, v) in l.borrow().iter().enumerate() {
+                for (i, v) in l.borrow_slice().iter().enumerate() {
                     if i > 0 {
                         write!(out, ", ")?;
                     }
@@ -295,7 +393,7 @@ impl EvalPrint<Context> for Value {
             }
             Value::List(l) => {
                 write!(out, "[")?;
-                for (i, v) in l.borrow().iter().enumerate() {
+                for (i, v) in l.borrow_slice().iter().enumerate() {
                     if i > 0 {
                         write!(out, ", ")?;
                     }

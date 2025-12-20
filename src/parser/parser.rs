@@ -760,7 +760,9 @@ impl<'a> Parser<'a> {
                     let mut start_expr: Option<Expr> = None;
                     let mut stop_expr: Option<Expr> = None;
 
-                    if parser.peek_token() != &Token::Colon && parser.peek_token() != &Token::RDelim("]") {
+                    if parser.peek_token() != &Token::Colon
+                        && parser.peek_token() != &Token::RDelim("]")
+                    {
                         start_expr = Some(parser.parse_expr(next_prec)?);
                         parser.consume_any(Token::Space);
                     }
@@ -782,9 +784,12 @@ impl<'a> Parser<'a> {
                     if is_slice {
                         lhs = Expr::slice(lhs, start_expr, stop_expr).with_span(span);
                     } else {
-                        let rhs = start_expr.ok_or_else(|| SyntaxError::new("expected expression", parser.position()))?;
+                        let rhs = start_expr.ok_or_else(|| {
+                            SyntaxError::new("expected expression", parser.position())
+                        })?;
                         let op_span = SourceSpan::new(parser.source_id, lspan.start, rspan.end);
-                        let operator = Operator::new(Ustr::from("[]"), OpKind::Infix).with_span(op_span);
+                        let operator =
+                            Operator::new(Ustr::from("[]"), OpKind::Infix).with_span(op_span);
 
                         lhs = Expr::infix_op(operator, lhs, rhs);
                     }
@@ -1274,14 +1279,9 @@ impl<'a> Parser<'a> {
 
                 if !is_decl {
                     // Ensure the operator was previously declared before allowing use.
-                    if parser
-                        .ctx
-                        .operators
-                        .get(kind, Ustr::from("[]"))
-                        .is_none()
-                    {
+                    if parser.ctx.operators.get(kind, Ustr::from("[]")).is_none() {
                         return Err(
-                            SyntaxError::new("undefined operator: []", parser.position()).into()
+                            SyntaxError::new("undefined operator: []", parser.position()).into(),
                         );
                     }
                 }
@@ -1663,9 +1663,5 @@ fn is_unit_suffix(suffix: &Token, ctx: &rt::Module) -> bool {
 }
 
 fn is_index_op(op: &Token, ctx: &rt::Module) -> bool {
-    op == &Token::LDelim("[")
-        && ctx
-            .operators
-            .get(OpKind::Infix, Ustr::from("[]"))
-            .is_some()
+    op == &Token::LDelim("[") && ctx.operators.get(OpKind::Infix, Ustr::from("[]")).is_some()
 }

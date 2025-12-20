@@ -25,6 +25,12 @@ pub enum ExpectType {
     Error,
 }
 
+#[derive(Debug, Clone)]
+enum CaseResult {
+    Passed,
+    Failed { expected: String, actual: String },
+}
+
 #[derive(Debug)]
 pub struct TestFile {
     pub include_file: Option<String>,
@@ -35,6 +41,14 @@ pub struct TestFile {
 #[derive(Clone, Debug)]
 pub struct TestRunner {
     pub test_dir: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+struct FailureRecord {
+    file_idx: usize,
+    name: String,
+    expected: String,
+    actual: String,
 }
 
 /// CLI options for the test runner.
@@ -57,7 +71,7 @@ pub struct CliArgs {
     pub fail_fast: bool,
 
     /// Number of worker threads (1 disables parallelism)
-    #[arg(short = 'j', long = "jobs", default_value = "4")]
+    #[arg(short = 'j', long = "jobs", default_value = "1")]
     pub jobs: usize,
 
     /// Color output: auto, always, never
@@ -103,7 +117,7 @@ impl TestRunner {
         let mut per_file_counts: Vec<usize> = Vec::new();
         let mut per_file_names: Vec<PathBuf> = Vec::new();
 
-        for (file_idx, path) in entries.into_iter().enumerate() {
+        for (_entry_idx, path) in entries.into_iter().enumerate() {
             let file_name = path
                 .file_name()
                 .and_then(|s| s.to_str())
@@ -114,8 +128,15 @@ impl TestRunner {
                 continue;
             }
 
+            print_with_color(
+                use_color,
+                Color::Yellow,
+                &format!("Running test file: {}", path.display()),
+            );
+
             let content = fs::read_to_string(&path)?;
             let parsed = self.parse_test_file(&content)?;
+            let file_idx = per_file_names.len();
             per_file_counts.push(parsed.test_cases.len());
             per_file_names.push(path.clone());
 
@@ -133,7 +154,7 @@ impl TestRunner {
 
         let total_tests: usize = per_file_counts.iter().sum();
         let mut passed_tests = 0usize;
-        let mut failed_tests: Vec<(usize, usize, String)> = Vec::new();
+        let mut failed_tests: Vec<FailureRecord> = Vec::new();
 
         // Shared state
         let stop_flag = Arc::new(AtomicBool::new(false));
@@ -141,7 +162,7 @@ impl TestRunner {
         // Task queue and result channel
         let (task_tx, task_rx) = mpsc::channel::<Task>();
         let task_rx = Arc::new(Mutex::new(task_rx));
-        let (res_tx, res_rx) = mpsc::channel::<(usize, usize, String, bool)>();
+        let (res_tx, res_rx) = mpsc::channel::<(usize, usize, String, CaseResult)>();
 
         // Spawn workers
         let worker_count = if jobs == 0 { 1 } else { jobs };
@@ -173,20 +194,33 @@ impl TestRunner {
                             &format!("  \u{2192} {}", task.test_case.name),
                         );
                     }
-                    let passed = runner
-                        .run_test_case(&task.test_case, &task.include, &task.setup, &task.swiss_bin)
-                        .unwrap_or(false);
-                    if verbose_worker {
-                        let status = if passed { "✓" } else { "✗" };
-                        let color = if passed { Color::Green } else { Color::Red };
-                        print_with_color(
-                            use_color,
-                            color,
-                            &format!("  {} {}", status, task.test_case.name),
-                        );
-                    }
+                    let outcome = match runner.run_test_case(
+                        &task.test_case,
+                        &task.include,
+                        &task.setup,
+                        &task.swiss_bin,
+                    ) {
+                        Ok(outcome) => outcome,
+                        Err(err) => CaseResult::Failed {
+                            expected: task.test_case.expected.clone(),
+                            actual: format!("test execution failed: {}", err),
+                        },
+                    };
+                    let status = match outcome {
+                        CaseResult::Passed => "✓",
+                        CaseResult::Failed { .. } => "✗",
+                    };
+                    let color = match outcome {
+                        CaseResult::Passed => Color::Green,
+                        CaseResult::Failed { .. } => Color::Red,
+                    };
+                    print_with_color(
+                        use_color,
+                        color,
+                        &format!("  {} {}", status, task.test_case.name),
+                    );
                     let _ =
-                        res_tx.send((task.file_idx, task.case_idx, task.test_case.name, passed));
+                        res_tx.send((task.file_idx, task.case_idx, task.test_case.name, outcome));
                 }
             });
         }
@@ -204,53 +238,36 @@ impl TestRunner {
         drop(task_tx);
 
         // Collect results
-        let mut results: Vec<Vec<Option<(String, bool)>>> = per_file_counts
+        let mut results: Vec<Vec<Option<(String, CaseResult)>>> = per_file_counts
             .iter()
             .map(|&count| vec![None; count])
             .collect();
 
-        while let Ok((file_idx, case_idx, name, passed)) = res_rx.recv() {
+        while let Ok((file_idx, case_idx, name, outcome)) = res_rx.recv() {
             if let Some(slot) = results
                 .get_mut(file_idx)
                 .and_then(|cases| cases.get_mut(case_idx))
             {
-                *slot = Some((name.clone(), passed));
+                *slot = Some((name.clone(), outcome.clone()));
             }
 
-            if passed {
-                passed_tests += 1;
-            } else {
-                failed_tests.push((file_idx, case_idx, name.clone()));
-                if fail_fast {
-                    stop_flag.store(true, Ordering::SeqCst);
-                    break;
+            match outcome {
+                CaseResult::Passed => {
+                    passed_tests += 1;
                 }
-            }
-        }
-
-        // Reporting
-        for (file_idx, path) in per_file_names.iter().enumerate() {
-            let cases = results.get(file_idx);
-            if verbose {
-                print_with_color(
-                    use_color,
-                    Color::Yellow,
-                    &format!("Running test file: {}", path.display()),
-                );
-            }
-            if let Some(cases) = cases {
-                for entry in cases {
-                    if let Some((name, passed)) = entry {
-                        if *passed {
-                            if verbose {
-                                print_with_color(use_color, Color::Green, &format!("  ✓ {}", name));
-                            }
-                        } else {
-                            print_with_color(use_color, Color::Red, &format!("  ✗ {}", name));
-                        }
+                CaseResult::Failed { expected, actual } => {
+                    failed_tests.push(FailureRecord {
+                        file_idx,
+                        name: name.clone(),
+                        expected,
+                        actual,
+                    });
+                    if fail_fast {
+                        stop_flag.store(true, Ordering::SeqCst);
+                        break;
                     }
                 }
-            }
+            };
         }
 
         let failed_count = failed_tests.len();
@@ -279,7 +296,8 @@ impl TestRunner {
         }
 
         if failed_count > 0 {
-            return Err("Some tests failed".into());
+            let summary = format_failure_summary(&failed_tests, &per_file_names, use_color);
+            return Err(summary.into());
         }
 
         Ok(())
@@ -297,12 +315,15 @@ impl TestRunner {
         let swiss_bin = resolve_swiss_bin()?;
 
         for test_case in test_file.test_cases {
-            let passed = self.run_test_case(
-                &test_case,
-                &test_file.include_file,
-                &test_file.setup_code,
-                &swiss_bin,
-            )?;
+            let passed = matches!(
+                self.run_test_case(
+                    &test_case,
+                    &test_file.include_file,
+                    &test_file.setup_code,
+                    &swiss_bin,
+                )?,
+                CaseResult::Passed
+            );
             results.push((test_case.name, passed));
         }
 
@@ -462,7 +483,7 @@ impl TestRunner {
         include_file: &Option<String>,
         setup_code: &Option<String>,
         swiss_bin: &Path,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
+    ) -> Result<CaseResult, Box<dyn std::error::Error>> {
         let mut args: Vec<String> = vec![];
         if let Some(include) = include_file {
             args.push("-f".to_string());
@@ -521,8 +542,8 @@ impl TestRunner {
         &self,
         test_case: &TestCase,
         output: std::process::Output,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
-        let success = match test_case.expect_type {
+    ) -> Result<CaseResult, Box<dyn std::error::Error>> {
+        let result = match test_case.expect_type {
             ExpectType::Output => {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let result_line = stdout
@@ -536,32 +557,43 @@ impl TestRunner {
                     let actual_clean = strip_ansi_codes(actual).trim().to_string();
                     let expected_clean = strip_ansi_codes(&test_case.expected).trim().to_string();
 
-                    let matches = actual_clean == expected_clean;
-                    if !matches {
+                    if actual_clean == expected_clean {
+                        CaseResult::Passed
+                    } else {
                         println!("    Expected: '{}'", expected_clean);
                         println!("    Actual:   '{}'", actual_clean);
+                        CaseResult::Failed {
+                            expected: expected_clean,
+                            actual: actual_clean,
+                        }
                     }
-                    matches
                 } else {
                     println!("    No RESULT found in output");
-                    false
+                    CaseResult::Failed {
+                        expected: strip_ansi_codes(&test_case.expected).trim().to_string(),
+                        actual: String::from_utf8_lossy(&output.stdout).trim().to_string(),
+                    }
                 }
             }
             ExpectType::Error => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                let actual_clean = strip_ansi_codes(&stderr);
-                let expected_clean = strip_ansi_codes(&test_case.expected);
+                let actual_clean = strip_ansi_codes(&stderr).trim().to_string();
+                let expected_clean = strip_ansi_codes(&test_case.expected).trim().to_string();
 
-                let matches = actual_clean.contains(&expected_clean);
-                if !matches {
+                if actual_clean.contains(&expected_clean) {
+                    CaseResult::Passed
+                } else {
                     println!("    Expected error containing: '{}'", expected_clean);
                     println!("    Actual error: '{}'", actual_clean);
+                    CaseResult::Failed {
+                        expected: expected_clean,
+                        actual: actual_clean,
+                    }
                 }
-                matches
             }
         };
 
-        Ok(success)
+        Ok(result)
     }
 }
 
@@ -618,6 +650,59 @@ fn print_with_color(enabled: bool, color: Color, msg: &str) {
 fn print_plain(msg: &str) {
     let mut out = std::io::stdout();
     let _ = writeln!(out, "{}", msg);
+}
+
+fn colorize(enabled: bool, code: &str, msg: &str) -> String {
+    if enabled {
+        format!("{}{}{}", code, msg, "\x1b[0m")
+    } else {
+        msg.to_string()
+    }
+}
+
+fn summarize_value(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.contains('\n') {
+        trimmed.replace('\n', "\\n")
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn format_failure_summary(
+    failures: &[FailureRecord],
+    file_names: &[PathBuf],
+    use_color: bool,
+) -> String {
+    let mut blocks = Vec::new();
+
+    for failure in failures {
+        let suite = file_names
+            .get(failure.file_idx)
+            .and_then(|path| path.file_name().and_then(|name| name.to_str()))
+            .unwrap_or("unknown suite");
+
+        let header = colorize(
+            use_color,
+            "\x1b[31m", // red
+            &format!("✗ {} - {}", suite, failure.name),
+        );
+        let expected_label = colorize(use_color, "\x1b[33m", "Expected:");
+        let actual_label = colorize(use_color, "\x1b[33m", "Actual:");
+        let expected = summarize_value(&failure.expected);
+        let actual = summarize_value(&failure.actual);
+
+        blocks.push(format!(
+            "{header}\n{expected_label} '{expected}'\n{actual_label}   '{actual}'",
+            header = header,
+            expected_label = expected_label,
+            actual_label = actual_label,
+            expected = expected,
+            actual = actual,
+        ));
+    }
+
+    blocks.join("\n\n")
 }
 
 fn resolve_swiss_bin() -> Result<PathBuf, Box<dyn Error>> {

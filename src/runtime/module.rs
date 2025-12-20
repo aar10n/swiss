@@ -26,6 +26,9 @@ pub struct Module {
     pub index: usize,
 
     pub name: Ustr,
+    pub prelude_applied: bool,
+    /// Modules whose declarations are visible for lookup (e.g., preludes).
+    pub opened: Vec<ModuleId>,
     pub names: NameTable,
     pub dimensions: DimensionTable,
     pub interfaces: InterfaceTable,
@@ -41,6 +44,8 @@ impl Module {
             id: module_id::next(),
             index,
             name,
+            prelude_applied: false,
+            opened: Vec::new(),
             names: NameTable::new(),
             dimensions: DimensionTable::new(),
             interfaces: InterfaceTable::new(),
@@ -90,7 +95,7 @@ impl Module {
             ));
         }
 
-        self.dimensions.insert(dim);
+        self.dimensions.insert(dim.clone());
         Ok(())
     }
 
@@ -103,7 +108,7 @@ impl Module {
             ));
         }
 
-        self.interfaces.insert(interface);
+        self.interfaces.insert(interface.clone());
         Ok(())
     }
 
@@ -116,7 +121,7 @@ impl Module {
             ));
         }
 
-        self.operators.insert(op);
+        self.operators.insert(op.clone());
         Ok(())
     }
 
@@ -146,7 +151,7 @@ impl Module {
             unit.is_base(),
         );
 
-        self.units.insert(unit);
+        self.units.insert(unit.clone());
         Ok(())
     }
 
@@ -297,6 +302,138 @@ impl ModuleMap {
             self.module_to_index.insert(module.id, index);
         }
         Ok(module)
+    }
+
+    // Overlay resolution that honors a module's opened list.
+    pub fn resolve_constant_in(
+        &self,
+        module_id: ModuleId,
+        name: Spanned<Ustr>,
+    ) -> Result<&Constant, NameError> {
+        let module = &self[module_id];
+        match module.names.resolve(&name.raw) {
+            NameResult::Constant(c) => Ok(c),
+            NameResult::Function(_) => {
+                Err(NameError::new("expected constant", name.to_string_inner())
+                    .with_extra("found function".to_owned()))
+            }
+            NameResult::Ambiguous(_) => {
+                Err(NameError::new("expected constant", name.to_string_inner()))
+            }
+            NameResult::None => {
+                for mid in &module.opened {
+                    let other = &self[*mid];
+                    if let NameResult::Constant(c) = other.names.resolve(&name.raw) {
+                        return Ok(c);
+                    }
+                }
+                Err(NameError::new("undefined", name.to_string_inner()))
+            }
+        }
+    }
+
+    pub fn resolve_function_in(
+        &self,
+        module_id: ModuleId,
+        name: Spanned<Ustr>,
+    ) -> Result<&Function, NameError> {
+        let module = &self[module_id];
+        match module.names.resolve(&name.raw) {
+            NameResult::Function(f) => Ok(f),
+            NameResult::Constant(_) => {
+                Err(NameError::new("expected function", name.to_string_inner())
+                    .with_extra("found constant".to_owned()))
+            }
+            NameResult::Ambiguous(funcs) => {
+                Err(NameError::new("expected function", name.to_string_inner())
+                    .with_extra(format!("found {} candidates", funcs.len())))
+            }
+            NameResult::None => {
+                for mid in &module.opened {
+                    let other = &self[*mid];
+                    if let NameResult::Function(f) = other.names.resolve(&name.raw) {
+                        return Ok(f);
+                    }
+                }
+                Err(NameError::new("undefined", name.to_string_inner()))
+            }
+        }
+    }
+
+    pub fn resolve_dimension_in(
+        &self,
+        module_id: ModuleId,
+        name: Spanned<Ustr>,
+    ) -> Result<&Dimension, NameError> {
+        let module = &self[module_id];
+        if let Some(dim) = module.dimensions.get(name.raw) {
+            return Ok(dim);
+        }
+        for mid in &module.opened {
+            let other = &self[*mid];
+            if let Some(dim) = other.dimensions.get(name.raw) {
+                return Ok(dim);
+            }
+        }
+        Err(NameError::new(
+            "undefined dimension",
+            name.to_string_inner(),
+        ))
+    }
+
+    pub fn resolve_operator_in(
+        &self,
+        module_id: ModuleId,
+        kind: OpKind,
+        name: Spanned<Ustr>,
+    ) -> Result<&Operator, NameError> {
+        let module = &self[module_id];
+        if let Some(op) = module.operators.get(kind, name.raw) {
+            return Ok(op);
+        }
+        for mid in &module.opened {
+            let other = &self[*mid];
+            if let Some(op) = other.operators.get(kind, name.raw) {
+                return Ok(op);
+            }
+        }
+        Err(NameError::new("undefined operator", name.to_string_inner()))
+    }
+
+    pub fn resolve_unit_suffix_in(
+        &self,
+        module_id: ModuleId,
+        suffix: Spanned<Ustr>,
+    ) -> Result<&Unit, NameError> {
+        let module = &self[module_id];
+        if let Some(unit) = module.units.resolve_suffix(suffix.raw) {
+            return Ok(unit);
+        }
+        for mid in &module.opened {
+            let other = &self[*mid];
+            if let Some(unit) = other.units.resolve_suffix(suffix.raw) {
+                return Ok(unit);
+            }
+        }
+        Err(NameError::new("undefined unit", suffix.to_spanned_string()))
+    }
+
+    pub fn resolve_unit_expr_in(
+        &self,
+        module_id: ModuleId,
+        expr: &DimExpr,
+    ) -> Result<&Unit, NameError> {
+        let module = &self[module_id];
+        if let Some(unit) = module.units.resolve_dimexpr(expr) {
+            return Ok(unit);
+        }
+        for mid in &module.opened {
+            let other = &self[*mid];
+            if let Some(unit) = other.units.resolve_dimexpr(expr) {
+                return Ok(unit);
+            }
+        }
+        Err(NameError::new("undefined unit", expr.to_string().into()))
     }
 }
 

@@ -11,6 +11,7 @@ pub struct Exception {
     pub message: String,
     pub extras: Vec<Spanned<String>>,
     pub backtrace: Vec<StackFrame>,
+    pub primary_span: Option<SourceSpan>,
 }
 
 impl Exception {
@@ -20,6 +21,7 @@ impl Exception {
             message,
             extras: vec![],
             backtrace: vec![],
+            primary_span: None,
         }
     }
 
@@ -32,6 +34,11 @@ impl Exception {
         self.backtrace = backtrace;
         self
     }
+
+    pub fn with_primary_span(mut self, span: SourceSpan) -> Self {
+        self.primary_span = Some(span);
+        self
+    }
 }
 
 impl std::fmt::Display for Exception {
@@ -42,16 +49,29 @@ impl std::fmt::Display for Exception {
 
 impl IntoErrorCtx<Context> for Exception {
     fn into_error_ctx(self, ctx: &Context) -> Error {
-        let mut err = Error::new(
-            format!("Exception: {}", self.message),
-            SourceSpan::default(),
-        );
+        // Prefer an explicit primary span, otherwise fall back to the first extra, otherwise invalid.
+        let primary_span = self.primary_span.unwrap_or_else(|| {
+            self.extras
+                .first()
+                .map(|e| e.span)
+                .unwrap_or_else(SourceSpan::default)
+        });
+
+        let mut err = Error::new(format!("Exception: {}", self.message), primary_span);
+
+        // Attach any additional context spans.
+        for extra in self.extras {
+            err = err.with_extra(extra.raw, extra.span);
+        }
+
+        // Append backtrace frames.
         for frame in self.backtrace {
             err = err.with_extra(
                 format!("  in call to '{}'", frame.function.raw),
                 frame.call_site,
             );
         }
+
         err
     }
 }

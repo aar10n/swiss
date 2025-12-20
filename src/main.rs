@@ -27,6 +27,9 @@ use clap::Parser;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
+    #[arg(short, long, help = "Implicitly import the given prelude file(s)")]
+    prelude: Vec<String>,
+
     #[arg(short, long, help = "Evaluate the given file(s)")]
     file: Vec<String>,
 
@@ -66,6 +69,12 @@ fn main() -> io::Result<()> {
 
     // create the runtime context
     let mut ctx = driver::new_context();
+    ctx.config.prelude_files = args.prelude;
+
+    if let Err(()) = driver::eval_preludes(&mut ctx) {
+        std::process::exit(1);
+    }
+
     let module_id = ctx.modules.new_module("global").unwrap().id;
     for (i, (path, source)) in sources.into_iter().enumerate() {
         let source_id = ctx.sources.add_source(path, source);
@@ -96,10 +105,14 @@ fn evaluate(
         Ok(Some(value)) if print_result => {
             use crate::print::DisplayString;
             if let Some(buf) = ctx.take_pending_output() {
-                Ok(println!("{GREEN}RESULT:{RESET} {}", buf))
+                // A formatter has already printed to the output buffer.
+                if buf.ends_with("\n") {
+                    Ok(print!("{}", buf))
+                } else {
+                    Ok(println!("{}", buf))
+                }
             } else {
-                // If a default formatter is configured, try to use it before falling back to
-                // the regular display_string.
+                // If a default formatter is configured use it.
                 if let Some(fmt_name) = ctx.default_formatter.clone() {
                     let fmt_span = SourceSpan::default();
                     if let Ok(func) = ctx.modules[module_id]
@@ -110,13 +123,17 @@ fn evaluate(
                         let res = Context::with_active_module(ctx, module_id, |ctx| {
                             crate::interp::call_function(
                                 ctx,
-                                func,
+                                &func,
                                 vec![value.clone(), Value::Io(io.clone())],
                             )
                         });
                         if res.is_ok() {
                             if let Some(buf) = io.take_buffer() {
-                                return Ok(println!("{GREEN}RESULT:{RESET} {}", buf));
+                                if buf.ends_with('\n') {
+                                    return Ok(print!("{}", buf));
+                                } else {
+                                    return Ok(println!("{}", buf));
+                                }
                             }
                         }
                     }
@@ -145,13 +162,17 @@ fn evaluate(
                         let res = Context::with_active_module(ctx, module_id, |ctx| {
                             crate::interp::call_function(
                                 ctx,
-                                func,
+                                &func,
                                 vec![value.clone(), Value::Io(io.clone())],
                             )
                         });
                         if res.is_ok() {
                             if let Some(buf) = io.take_buffer() {
-                                return Ok(println!("{GREEN}RESULT:{RESET} {}", buf));
+                                if buf.ends_with('\n') {
+                                    return Ok(print!("{}", buf));
+                                } else {
+                                    return Ok(println!("{}", buf));
+                                }
                             }
                         }
                     }

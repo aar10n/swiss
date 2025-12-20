@@ -1,7 +1,9 @@
 mod interp;
 
 use crate::ast::{Expr, Module};
-use crate::diag::{Error, IntoErrorCtx};
+use crate::diag::{Error, IntoError, IntoErrorCtx};
+use crate::lexer::LexError;
+use crate::parser::ParseError;
 use crate::print::PrettyString;
 use crate::runtime::{Context, DeclError, NameError, TypeError};
 use crate::source::{SourcePos, Spanned};
@@ -14,7 +16,9 @@ pub type InterpResult<T> = Result<T, InterpError>;
 #[derive(Debug)]
 pub enum InterpError {
     DeclError(DeclError),
+    LexError(LexError),
     NameError(NameError),
+    ParseError(ParseError),
     TypeError(TypeError),
     Exception(Exception),
     Break,
@@ -33,7 +37,9 @@ macro_rules! impl_from_error {
 }
 
 impl_from_error!(DeclError);
+impl_from_error!(LexError);
 impl_from_error!(NameError);
+impl_from_error!(ParseError);
 impl_from_error!(TypeError);
 impl_from_error!(Exception);
 
@@ -41,7 +47,9 @@ impl std::fmt::Display for InterpError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             InterpError::DeclError(_) => write!(f, "declaration error"),
+            InterpError::LexError(_) => write!(f, "lex error"),
             InterpError::NameError(_) => write!(f, "name error"),
+            InterpError::ParseError(_) => write!(f, "parse error"),
             InterpError::TypeError(_) => write!(f, "type error"),
             InterpError::Exception(e) => write!(f, "{}: {}", e.kind, e.message),
             InterpError::Return(_) => write!(f, "'return' used outside of function"),
@@ -55,7 +63,9 @@ impl IntoErrorCtx<Context> for InterpError {
     fn into_error_ctx(self, ctx: &Context) -> Error {
         match self {
             InterpError::DeclError(err) => err.into_error_ctx(ctx),
+            InterpError::LexError(err) => err.into_error(),
             InterpError::NameError(err) => err.into_error_ctx(ctx),
+            InterpError::ParseError(err) => err.into_error(),
             InterpError::TypeError(err) => err.into_error_ctx(ctx),
             InterpError::Exception(err) => err.into_error_ctx(ctx),
             InterpError::Return(value) => Error::new(
@@ -84,7 +94,7 @@ pub fn evaluate(ctx: &mut Context, expr: &Expr) -> Result<Value, Error> {
 
 pub fn interpret(ctx: &mut Context, ast_module: &Module) -> InterpResult<Option<Value>> {
     Context::with_active_module(ctx, ast_module.module_id, |ctx| {
-        let mut interp = interp::Interpreter::new(ctx);
+        let mut interp = interp::Interpreter::new(ctx).with_source(ast_module.source_id);
         let mut value = None;
         for item in &ast_module.items {
             if let Some(v) = item.eval(&mut interp)? {

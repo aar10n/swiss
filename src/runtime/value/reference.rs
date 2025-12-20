@@ -49,6 +49,10 @@ impl<T: Clone> VRef<T> {
         }
         self.inner.borrow_mut()
     }
+
+    pub fn strong_count(&self) -> usize {
+        Rc::strong_count(&self.inner)
+    }
 }
 
 // MARK: ValueRef
@@ -132,7 +136,7 @@ impl ValueRef {
         }
     }
 
-    pub fn try_into_list(self, ctx: &Context) -> Result<VRef<Vec<Value>>, Exception> {
+    pub fn try_into_list(self, ctx: &Context) -> Result<super::List, Exception> {
         match self.inner.replace(Value::Empty) {
             Value::Ref(r) => {
                 let value = r.into_value();

@@ -261,18 +261,14 @@ impl UnitDecl {
         }
     }
 
-    pub fn expr_unit(
-        name: Ident,
-        suffixes: Vec<Ident>,
-        expr: Either<Expr, UnitImpl>,
-    ) -> Self {
+    pub fn expr_unit(name: Ident, suffixes: Vec<Ident>, expr: Either<Expr, UnitImpl>) -> Self {
         Self {
             id: node_id::next(),
             span: SourceSpan::default(),
             name,
             kind: UnitKind::SubUnit,
             suffixes,
-            dimension: None,  // Will be computed from expr
+            dimension: None, // Will be computed from expr
             value: Some(expr),
         }
     }

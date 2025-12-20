@@ -30,23 +30,7 @@ EXPECT: (2, 3)
 
 TEST: String slice
 INPUT: "abcdef"[1:4]
-EXPECT: bcd
-
-TEST: Reverse helper list
-INPUT: reverse([1, 2, 3])
-EXPECT: [3, 2, 1]
-
-TEST: Reverse helper tuple
-INPUT: reverse((1, 2, 3))
-EXPECT: (3, 2, 1)
-
-TEST: Reverse helper string
-INPUT: reverse("abc")
-EXPECT: cba
-
-TEST: Reverse helper string
-INPUT: reverse("abc")
-EXPECT: cba
+EXPECT: "bcd"
 
 TEST: Slice type error
 INPUT: 5[0:1]

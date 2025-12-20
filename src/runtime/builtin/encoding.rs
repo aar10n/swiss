@@ -60,7 +60,7 @@ fn dispatch_encode(ctx: &mut Context, name: &str, value: Value) -> Result<Value,
             .with_backtrace(ctx.backtrace())
     })?;
 
-    let result = interp::call_function(ctx, encode_fn, vec![value])?;
+    let result = interp::call_function(ctx, &encode_fn, vec![value])?;
     match result {
         Value::String(_) => Ok(result),
         other => Err(Exception::new(
@@ -81,7 +81,7 @@ fn dispatch_decode(ctx: &mut Context, name: &str, text: String) -> Result<Value,
         Exception::new("NameError", format!("encoding '{}' not registered", name))
             .with_backtrace(ctx.backtrace())
     })?;
-    interp::call_function(ctx, decode_fn, vec![Value::String(text)])
+    interp::call_function(ctx, &decode_fn, vec![Value::String(text)])
 }
 
 fn validate_encode_fn(ctx: &Context, func: &Function) -> Result<(), Exception> {
@@ -150,7 +150,7 @@ fn value_to_json(ctx: &Context, value: &Value) -> Result<JsonValue, Exception> {
         }
         Value::List(list) => {
             let mut arr = Vec::new();
-            for item in list.borrow().iter() {
+            for item in list.borrow_slice().iter() {
                 arr.push(value_to_json(ctx, item)?);
             }
             JsonValue::Array(arr)

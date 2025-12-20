@@ -85,7 +85,10 @@ impl<'a> Lexer<'a> {
         let start_off = self.offset;
 
         if self.trace_on {
-            eprintln!("[TRACE_LEXER] next_token at offset {}: ch={:?}", start_off, ch);
+            eprintln!(
+                "[TRACE_LEXER] next_token at offset {}: ch={:?}",
+                start_off, ch
+            );
         }
 
         let result = if is_decimal_digit(ch) {
@@ -122,7 +125,8 @@ impl<'a> Lexer<'a> {
             Ok(Token::DirectiveStart)
         } else if ch == ']' && self.state == LexerState::MiddleOfDirective {
             self.take_one().unwrap(); // ]
-            if self.peek(0) == '\n' {
+            let next = self.peek(0);
+            if next == '\n' || next == '\0' {
                 self.state = LexerState::MiddleOfLine;
                 Ok(Token::DirectiveEnd)
             } else {
@@ -152,7 +156,10 @@ impl<'a> Lexer<'a> {
 
         if self.trace_on {
             match &result {
-                Ok(token) => eprintln!("[TRACE_LEXER] token: {:?} @ {}..{}", token, start_off, end_off),
+                Ok(token) => eprintln!(
+                    "[TRACE_LEXER] token: {:?} @ {}..{}",
+                    token, start_off, end_off
+                ),
                 Err(_) => eprintln!("[TRACE_LEXER] error at {}..{}", start_off, end_off),
             }
         }
@@ -244,6 +251,7 @@ impl<'a> Lexer<'a> {
         let mut value = String::new();
         while let Some(ch) = self.take_one() {
             if ch == '\\' {
+                let err_pos = self.position();
                 let ch = self
                     .take_one()
                     .ok_or_else(|| LexError::new("unexpected end of input", self.position()))?;
@@ -251,9 +259,41 @@ impl<'a> Lexer<'a> {
                     'n' => '\n',
                     'r' => '\r',
                     't' => '\t',
+                    'a' => '\u{07}',
+                    'b' => '\u{08}',
+                    'f' => '\u{0C}',
+                    'v' => '\u{0B}',
+                    '0' => '\0',
                     '\\' => '\\',
                     '"' => '"',
-                    _ => return Err(LexError::new("invalid escape sequence", self.position())),
+                    'x' => {
+                        let h1 = self.take_one().ok_or_else(|| {
+                            LexError::new("unexpected end of input", self.position())
+                        })?;
+                        let h2 = self.take_one().ok_or_else(|| {
+                            LexError::new("unexpected end of input", self.position())
+                        })?;
+                        let code = match (hex_value(h1), hex_value(h2)) {
+                            (Some(a), Some(b)) => (a << 4) | b,
+                            _ => return Err(LexError::new("invalid escape sequence", err_pos)),
+                        };
+                        char::from_u32(code as u32).unwrap()
+                    }
+                    'u' => {
+                        let mut code: u32 = 0;
+                        for shift in [12, 8, 4, 0] {
+                            let h = self.take_one().ok_or_else(|| {
+                                LexError::new("unexpected end of input", self.position())
+                            })?;
+                            let Some(val) = hex_value(h) else {
+                                return Err(LexError::new("invalid escape sequence", err_pos));
+                            };
+                            code |= (val as u32) << shift;
+                        }
+                        char::from_u32(code)
+                            .ok_or_else(|| LexError::new("invalid escape sequence", err_pos))?
+                    }
+                    _ => return Err(LexError::new("invalid escape sequence", err_pos)),
                 };
                 value.push(ch);
             } else if ch == '"' {
@@ -423,6 +463,10 @@ impl<'a> Lexer<'a> {
 
 fn is_decimal_digit(ch: char) -> bool {
     ch.is_digit(10)
+}
+
+fn hex_value(ch: char) -> Option<u8> {
+    ch.to_digit(16).map(|d| d as u8)
 }
 
 fn is_identifier_char_start(ch: char) -> bool {

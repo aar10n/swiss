@@ -524,13 +524,11 @@ impl EvalPrint<Context> for Quantity {
 
             // Get custom display name if available (only for simple units)
             let unit_str = match unit_info {
-                super::UnitInfo::Simple(name, Conversion::Impl(unit_impl)) => {
-                    unit_impl
-                        .display_name(ctx)
-                        .ok()
-                        .flatten()
-                        .unwrap_or_else(|| name.to_string())
-                }
+                super::UnitInfo::Simple(name, Conversion::Impl(unit_impl)) => unit_impl
+                    .display_name(ctx)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| name.to_string()),
                 _ => unit_info.to_string(),
             };
 

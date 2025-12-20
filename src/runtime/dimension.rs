@@ -19,11 +19,19 @@ pub struct Dimension {
 
 impl Dimension {
     pub fn new(name: Spanned<Ustr>, expr: DimExpr) -> Self {
-        Self { name, expr, label: None }
+        Self {
+            name,
+            expr,
+            label: None,
+        }
     }
 
     pub fn with_label(name: Spanned<Ustr>, expr: DimExpr, label: Spanned<Ustr>) -> Self {
-        Self { name, expr, label: Some(label) }
+        Self {
+            name,
+            expr,
+            label: Some(label),
+        }
     }
 }
 
@@ -57,6 +65,10 @@ impl DimensionTable {
 
     pub fn get(&self, name: Ustr) -> Option<&Dimension> {
         self.dimensions.get(&name)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Dimension> {
+        self.dimensions.values()
     }
 
     pub fn resolve_expr(&self, expr: &DimExpr) -> Option<&Dimension> {

@@ -11,6 +11,7 @@ pub type LexResult<T> = Result<T, LexError>;
 
 // MARK: LexError
 
+#[derive(Debug)]
 pub struct LexError {
     pub msg: String,
     pub pos: SourcePos,

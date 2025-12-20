@@ -1,5 +1,6 @@
-use crate::runtime::{Context, Exception, Module, Value};
+use crate::interp::VRef;
 use crate::print::PrettyString;
+use crate::runtime::{Context, Exception, Module, Value};
 use smallvec::SmallVec;
 use ustr::Ustr;
 
@@ -8,7 +9,7 @@ pub(super) fn register(module: &mut Module) {
         .with_function(builtin_fn_v2!("len", |&ctx, v: any| {
             let len = match v {
                 Value::String(s) => s.chars().count(),
-                Value::List(l) => l.borrow().len(),
+                Value::List(l) => l.len(),
                 Value::Tuple(t) => t.len(),
                 Value::Object(o) => o.borrow().len(),
                 _ => {
@@ -23,15 +24,13 @@ pub(super) fn register(module: &mut Module) {
         }))
         .with_function(builtin_fn_v2!("reverse", |&ctx, v: any| {
             let result = match v {
-                Value::List(list) => {
-                    let mut items = list.borrow().clone();
-                    items.reverse();
-                    Value::list(items)
-                }
+                Value::List(list) => Value::list(list.borrow_slice().iter().cloned().rev().collect()),
                 Value::Tuple(tuple) => {
                     let mut items: Vec<Value> = tuple.iter().map(|v| (**v).clone()).collect();
                     items.reverse();
-                    Value::Tuple(SmallVec::from_vec(items.into_iter().map(Box::new).collect()))
+                    Value::Tuple(SmallVec::from_vec(
+                        items.into_iter().map(Box::new).collect(),
+                    ))
                 }
                 Value::String(s) => Value::String(s.chars().rev().collect()),
                 other => {
@@ -61,15 +60,15 @@ pub(super) fn register(module: &mut Module) {
                         .map_err(|e| e.with_backtrace(ctx.backtrace()))?
                         .to_usize()
                         .ok_or_else(|| {
-                            Exception::new(
-                                "IndexError",
-                                "index must be non-negative".to_string(),
-                            )
-                            .with_backtrace(ctx.backtrace())
+                            Exception::new("IndexError", "index must be non-negative".to_string())
+                                .with_backtrace(ctx.backtrace())
                         }),
                     other => Err(Exception::new(
                         "TypeError",
-                        format!("index must be an integer, found {}", other.ty().plain_string(ctx)),
+                        format!(
+                            "index must be an integer, found {}",
+                            other.ty().plain_string(ctx)
+                        ),
                     )
                     .with_backtrace(ctx.backtrace())),
                 }
@@ -78,23 +77,16 @@ pub(super) fn register(module: &mut Module) {
             let value = match container {
                 Value::List(list) => {
                     let idx = as_usize(idx_value)?;
-                    let items = list.borrow();
-                    items.get(idx).cloned().ok_or_else(|| {
-                        Exception::new(
-                            "IndexError",
-                            format!("list index out of range: {}", idx),
-                        )
-                        .with_backtrace(ctx.backtrace())
+                    list.get(idx).ok_or_else(|| {
+                        Exception::new("IndexError", format!("list index out of range: {}", idx))
+                            .with_backtrace(ctx.backtrace())
                     })?
                 }
                 Value::Tuple(tuple) => {
                     let idx = as_usize(idx_value)?;
                     *tuple.get(idx).cloned().ok_or_else(|| {
-                        Exception::new(
-                            "IndexError",
-                            format!("tuple index out of range: {}", idx),
-                        )
-                        .with_backtrace(ctx.backtrace())
+                        Exception::new("IndexError", format!("tuple index out of range: {}", idx))
+                            .with_backtrace(ctx.backtrace())
                     })?
                 }
                 Value::Object(object) => {
@@ -132,11 +124,8 @@ pub(super) fn register(module: &mut Module) {
                         .find(|(k, _)| *k == key_ustr)
                         .map(|(_, v)| v.clone())
                         .ok_or_else(|| {
-                            Exception::new(
-                                "KeyError",
-                                format!("object key not found: \"{}\"", key),
-                            )
-                            .with_backtrace(ctx.backtrace())
+                            Exception::new("KeyError", format!("object key not found: \"{}\"", key))
+                                .with_backtrace(ctx.backtrace())
                         })?
                 }
                 other => {
@@ -158,11 +147,14 @@ pub(super) fn register(module: &mut Module) {
                     if let Some(pos) = fields.iter().position(|(k, _)| *k == key_ustr) {
                         fields.remove(pos);
                     }
-                    Ok(Value::Empty)
+                    Ok(Value::Object(VRef::new(fields.clone())))
                 }
                 other => Err(Exception::new(
                     "TypeError",
-                    format!("delete expects object, found {}", other.ty().plain_string(ctx)),
+                    format!(
+                        "delete expects object, found {}",
+                        other.ty().plain_string(ctx)
+                    ),
                 )
                 .with_backtrace(ctx.backtrace())),
             }
@@ -170,12 +162,16 @@ pub(super) fn register(module: &mut Module) {
         .with_function(builtin_fn_v2!("append", |&ctx, list: any, item: any| {
             match list {
                 Value::List(v) => {
-                    v.borrow_mut().push(item);
-                    Ok(Value::Empty)
+                    let mut v = v;
+                    v.push(item);
+                    Ok(Value::List(v))
                 }
                 other => Err(Exception::new(
                     "TypeError",
-                    format!("append expects list, found {}", other.ty().plain_string(ctx)),
+                    format!(
+                        "append expects list, found {}",
+                        other.ty().plain_string(ctx)
+                    ),
                 )
                 .with_backtrace(ctx.backtrace())),
             }

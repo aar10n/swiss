@@ -1,6 +1,6 @@
-use crate::runtime::{Context, Exception, IoHandle, Module, Value};
 use crate::interp;
 use crate::print::{DisplayString, PrettyString};
+use crate::runtime::{Context, Exception, IoHandle, Module, Value};
 
 pub(super) fn register(module: &mut Module) {
     module
@@ -23,8 +23,9 @@ pub(super) fn register(module: &mut Module) {
                 Value::String(s) => s.clone(),
                 _ => v.display_string(ctx),
             };
-            io.write_str(&content)
-                .map_err(|e| Exception::new("IoError", e.to_string()).with_backtrace(ctx.backtrace()))?;
+            io.write_str(&content).map_err(|e| {
+                Exception::new("IoError", e.to_string()).with_backtrace(ctx.backtrace())
+            })?;
             Ok(Value::default())
         }))
         .with_function(builtin_fn_v2!("writeln", |&ctx, io: io, v: any| {
@@ -33,18 +34,21 @@ pub(super) fn register(module: &mut Module) {
                 _ => v.display_string(ctx),
             };
             content.push('\n');
-            io.write_str(&content)
-                .map_err(|e| Exception::new("IoError", e.to_string()).with_backtrace(ctx.backtrace()))?;
+            io.write_str(&content).map_err(|e| {
+                Exception::new("IoError", e.to_string()).with_backtrace(ctx.backtrace())
+            })?;
             Ok(Value::default())
         }))
-        .with_function(builtin_fn_v2!("format_apply", |&ctx, value: any, formatter: fn| {
-            let io = IoHandle::buffer();
-            // Call the formatter with (value, io)
-            interp::call_function(ctx, formatter.clone(), vec![value.clone(), Value::Io(io.clone())])?;
+        .with_function(
+            builtin_fn_v2!("format_apply", |&ctx, value: any, formatter: fn| {
+                let io = IoHandle::buffer();
 
-            if let Some(buf) = io.take_buffer() {
-                ctx.set_pending_output(buf);
-            }
-            Ok(value)
-        }));
+                // formatter(value, io)
+                interp::call_function(ctx, &formatter, vec![value.clone(), Value::Io(io.clone())])?;
+                if let Some(buf) = io.take_buffer() {
+                    ctx.set_pending_output(buf);
+                }
+                Ok(value)
+            }),
+        );
 }
