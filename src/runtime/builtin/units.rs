@@ -57,13 +57,18 @@ pub(super) fn register(ctx: &mut Context) {
             }
         }))
         .with_function(builtin_fn_v2!("conversions", |&ctx, unit: unit| {
-            let module = ctx.active_module().unwrap();
-            let resolved_unit = module.units.resolve_suffix(unit).ok_or_else(|| {
-                Exception::new("NameError", format!("unknown unit: {}", unit))
-                    .with_backtrace(ctx.backtrace())
-            })?;
+            let active_module = ctx.active_module().unwrap();
+            let module_id = active_module.id;
+            let resolved_unit = ctx
+                .modules
+                .resolve_unit_suffix_in(module_id, unit.into())
+                .cloned()
+                .map_err(|_| {
+                    Exception::new("NameError", format!("unknown unit: {}", unit))
+                        .with_backtrace(ctx.backtrace())
+                })?;
 
-            let compatible = module
+            let compatible = active_module
                 .conversion_graph
                 .get_compatible_units(resolved_unit.name.raw)
                 .ok_or_else(|| {
@@ -86,11 +91,15 @@ pub(super) fn register(ctx: &mut Context) {
             Ok(Value::list(units))
         }))
         .with_function(builtin_fn_v2!("unit_name", |&ctx, unit: unit| {
-            let module = ctx.active_module().unwrap();
-            let resolved = module.units.resolve_suffix(unit).cloned().ok_or_else(|| {
-                Exception::new("NameError", format!("unknown unit: {}", unit))
-                    .with_backtrace(ctx.backtrace())
-            })?;
+            let module_id = ctx.active_module().unwrap().id;
+            let resolved = ctx
+                .modules
+                .resolve_unit_suffix_in(module_id, unit.into())
+                .cloned()
+                .map_err(|_| {
+                    Exception::new("NameError", format!("unknown unit: {}", unit))
+                        .with_backtrace(ctx.backtrace())
+                })?;
 
             let display = match &resolved.conversion {
                 Conversion::Impl(unit_impl) => unit_impl
@@ -107,9 +116,11 @@ pub(super) fn register(ctx: &mut Context) {
             // Extract target unit information and clone conversion graph
             let (target_name, target_dim, source_unit, base_unit_opt, conv_graph) = {
                 let active_module = ctx.active_module().unwrap();
+                let module_id = active_module.id;
 
-                let target_unit = active_module
-                    .resolve_unit_suffix(u.into())
+                let target_unit = ctx
+                    .modules
+                    .resolve_unit_suffix_in(module_id, u.into())
                     .map_err(|_| Exception::new("NameError", format!("unknown unit: {}", u)))?;
 
                 // Ensure the dimensions are compatible

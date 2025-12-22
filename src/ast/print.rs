@@ -89,8 +89,27 @@ impl PrettyPrint<Context> for Item {
             ItemKind::OpDecl(decl) => decl.pretty_print(out, ctx, level),
             ItemKind::ConstDecl(decl) => decl.pretty_print(out, ctx, level),
             ItemKind::FnDecl(decl) => decl.pretty_print(out, ctx, level),
+            ItemKind::ModuleDecl(decl) => decl.pretty_print(out, ctx, level),
             ItemKind::Expr(expr) => expr.pretty_print(out, ctx, level),
         }
+    }
+}
+
+impl PrettyPrint<Context> for ModuleDecl {
+    fn pretty_print<Output: io::Write>(
+        &self,
+        out: &mut Output,
+        ctx: &Context,
+        level: usize,
+    ) -> io::Result<()> {
+        let tab = TABWIDTH.repeat(level);
+        write!(out, "{tab}{KEYWORD}module{RESET} ")?;
+        self.name.pretty_print(out, ctx, 0)?;
+        writeln!(out, " {PUNCT}{{{RESET}")?;
+        for item in &self.items {
+            item.pretty_print(out, ctx, level + 1)?;
+        }
+        writeln!(out, "{tab}{PUNCT}}}{RESET}")
     }
 }
 
@@ -133,6 +152,17 @@ impl PrettyPrint<Context> for Directive {
                 "{DIRECTIVE}precision{RESET}{EQUALS}{NUMBER}{}{RESET}",
                 prec,
             ),
+            DirectiveKind::SignificantFigures(places) => match places {
+                Some(places) => write!(
+                    out,
+                    "{DIRECTIVE}significant_figures{RESET}{EQUALS}{NUMBER}{}{RESET}",
+                    places
+                ),
+                None => write!(
+                    out,
+                    "{DIRECTIVE}significant_figures{RESET}{EQUALS}{PUNCT}(){RESET}",
+                ),
+            },
             DirectiveKind::UnitPreference(preference) => write!(
                 out,
                 "{DIRECTIVE}unit_preference{RESET}{EQUALS}{IDENT}{:?}{RESET}",
@@ -143,6 +173,7 @@ impl PrettyPrint<Context> for Directive {
                 "{DIRECTIVE}default_formatter{RESET}{EQUALS}{IDENT}{}{RESET}",
                 name.raw
             ),
+            DirectiveKind::Builtin => write!(out, "{DIRECTIVE}builtin{RESET}"),
         }
     }
 }
@@ -612,6 +643,9 @@ impl PrettyPrint<Context> for Param {
             }
             _ => (),
         };
+        if self.is_optional {
+            write!(out, "{PUNCT}?{RESET}")?;
+        }
         Ok(())
     }
 }

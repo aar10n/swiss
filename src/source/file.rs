@@ -1,9 +1,9 @@
 use super::{source_id, SourceId, SourceLoc, SourceSpan, Spanned};
 
 use smallvec::{smallvec, SmallVec};
-use std::env;
 use std::fs::File;
 use std::io::{self, Read};
+use std::path::{Component, Path};
 use ustr::Ustr;
 
 /// A source file.
@@ -13,6 +13,8 @@ pub struct SourceFile {
     id: SourceId,
     /// The source file name.
     name: String,
+    /// The base directory used to derive module paths.
+    module_base: Option<std::path::PathBuf>,
     /// The raw source code.
     source: String,
     /// The start and end offsets of all lines of source code.
@@ -21,23 +23,41 @@ pub struct SourceFile {
 
 impl SourceFile {
     pub fn new(id: SourceId, name: String, source: String) -> Self {
+        Self::new_with_base(id, name, source, None)
+    }
+
+    pub fn new_with_base(
+        id: SourceId,
+        name: String,
+        source: String,
+        module_base: Option<std::path::PathBuf>,
+    ) -> Self {
         let lines = source_line_spans(&source);
         Self {
             id,
             name,
+            module_base,
             source,
             lines,
         }
     }
 
     pub fn from_file(name: &str) -> io::Result<SourceFile> {
+        Self::from_file_with_base(name, None)
+    }
+
+    pub fn from_file_with_base(
+        name: &str,
+        module_base: Option<std::path::PathBuf>,
+    ) -> io::Result<SourceFile> {
         let mut file = File::open(name)?;
         let mut contents = String::new();
         file.read_to_string(&mut contents)?;
-        Ok(SourceFile::new(
+        Ok(SourceFile::new_with_base(
             source_id::next(),
             name.to_owned(),
             contents,
+            module_base,
         ))
     }
 
@@ -66,7 +86,24 @@ impl SourceFile {
     /// Returns the full module path of the source file.
     pub fn module_path(&self) -> SmallVec<[Spanned<Ustr>; 4]> {
         // ex. "src/source/my-module.ch" -> src::source::my_module
-        separate_module_path(self.name())
+        let file_path = super::normalize_path(Path::new(self.name()));
+        if let Some(base) = self
+            .module_base
+            .as_ref()
+            .map(|path| super::normalize_path(path))
+        {
+            if let Ok(relative) = file_path.strip_prefix(&base) {
+                return separate_module_path(relative);
+            }
+        }
+
+        if let Some(base) = super::swisspath_best_base(&file_path) {
+            if let Ok(relative) = file_path.strip_prefix(&base) {
+                return separate_module_path(relative);
+            }
+        }
+
+        separate_module_path(Path::new(self.name()))
     }
 
     /// Returns the (line, column) for the given offset.
@@ -233,8 +270,13 @@ fn sanitize_module_name<S: AsRef<str>>(name: S) -> String {
         .replace("-", "_")
 }
 
-fn separate_module_path(path: &str) -> SmallVec<[Spanned<Ustr>; 4]> {
-    path.split('/')
-        .map(|part| Spanned::from(Ustr::from(&sanitize_module_name(part))))
-        .collect()
+fn separate_module_path(path: &Path) -> SmallVec<[Spanned<Ustr>; 4]> {
+    let mut parts = SmallVec::new();
+    for component in path.components() {
+        if let Component::Normal(part) = component {
+            let part = part.to_string_lossy();
+            parts.push(Spanned::from(Ustr::from(&sanitize_module_name(part))));
+        }
+    }
+    parts
 }

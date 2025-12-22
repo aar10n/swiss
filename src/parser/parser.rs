@@ -12,6 +12,7 @@ use ustr::Ustr;
 
 const TABWIDTH: &str = "    ";
 const FLOAT_LIT_PRECISION: u32 = 53;
+const MAX_MODULE_NESTING: usize = 4;
 
 const PAREN_DELIM: (Token, Token) = (Token::LDelim("("), Token::RDelim(")"));
 const BRACK_DELIM: (Token, Token) = (Token::LDelim("["), Token::RDelim("]"));
@@ -128,6 +129,8 @@ pub struct Parser<'a> {
 
     trace_on: bool,
     trace_level: usize,
+    module_depth: usize,
+    pending_builtin_wrapper: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -143,6 +146,8 @@ impl<'a> Parser<'a> {
 
             trace_on: std::env::var("TRACE_PARSER").is_ok(),
             trace_level: 0,
+            module_depth: 0,
+            pending_builtin_wrapper: false,
         }
     }
 
@@ -160,21 +165,56 @@ impl<'a> Parser<'a> {
             }
         }
 
+        if self.pending_builtin_wrapper {
+            return Err(SyntaxError::new(
+                "expected fn declaration after '#[builtin]'",
+                self.position(),
+            )
+            .into());
+        }
+
         Ok(Module::new(self.source_id, self.ctx.id, items))
     }
 
-    // item ::= [ <import> | <directive> | <base_unit_decl> | <sub_unit_decl> | <dim_decl> | <const_decl> | <fn_decl> | <expr> ]
+    // item ::= [ <import> | <module_decl> | <directive> | <base_unit_decl> | <sub_unit_decl> | <dim_decl> | <const_decl> | <fn_decl> | <expr> ]
     fn parse_item(&mut self) -> ParseResult<Option<Item>> {
         self.trace("parse_item", |parser| {
             parser.consume_any(Token::Space);
 
             let next_token = parser.peek_token();
-            let item = if next_token.is_directive_start() {
+            let item = if parser.pending_builtin_wrapper {
+                if next_token != &Token::Keyword(Keyword::Fn) {
+                    return Err(SyntaxError::new(
+                        "expected fn declaration after '#[builtin]'",
+                        parser.position(),
+                    )
+                    .into());
+                }
+                let mut decl = parser.parse_fn_decl()?;
+                decl.is_builtin_wrapper = true;
+                parser.pending_builtin_wrapper = false;
+                Some(Item::fn_decl(decl))
+            } else if next_token.is_directive_start() {
                 let directive = parser.parse_directive()?;
-                Some(Item::directive(directive))
+                if matches!(directive.kind, DirectiveKind::Builtin) {
+                    if parser.pending_builtin_wrapper {
+                        return Err(SyntaxError::new(
+                            "expected fn declaration after '#[builtin]'",
+                            parser.position(),
+                        )
+                        .into());
+                    }
+                    parser.pending_builtin_wrapper = true;
+                    None
+                } else {
+                    Some(Item::directive(directive))
+                }
             } else if next_token == &Token::Keyword(Keyword::Import) {
                 let path = parser.parse_import()?;
                 Some(Item::import(path))
+            } else if next_token == &Token::Keyword(Keyword::Module) {
+                let decl = parser.parse_module_decl()?;
+                Some(Item::module_decl(decl))
             } else if next_token == &Token::Keyword(Keyword::Base) {
                 let decl = parser.parse_base_unit_decl()?;
                 // Register unit suffixes during parsing so they're available for is_unit_suffix() checks
@@ -239,6 +279,85 @@ impl<'a> Parser<'a> {
             parser.consume_any(Token::Space);
             let path = parser.parse_path()?;
             Ok(path)
+        })
+    }
+
+    // module_decl ::= 'module' _ <ident> _ '{' <module_items> '}'
+    fn parse_module_decl(&mut self) -> ParseResult<ModuleDecl> {
+        self.span_and_trace("parse_module_decl", |parser| {
+            if parser.module_depth >= MAX_MODULE_NESTING {
+                return Err(
+                    SyntaxError::new("module nesting limit exceeded", parser.position()).into(),
+                );
+            }
+
+            parser.expect(Token::Keyword(Keyword::Module), "expected 'module'")?;
+            parser.consume_any(Token::Space);
+
+            let name = parser.parse_ident()?;
+            parser.consume_any(Token::Space);
+
+            parser.expect(Token::LDelim("{"), "expected '{'")?;
+            parser.consume_one(Token::NewLine);
+            parser.consume_any(Token::Space);
+
+            let prev_depth = parser.module_depth;
+            parser.module_depth += 1;
+            let items = match parser.parse_module_items() {
+                Ok(items) => items,
+                Err(err) => {
+                    parser.module_depth = prev_depth;
+                    return Err(err);
+                }
+            };
+            parser.module_depth = prev_depth;
+
+            parser.expect(Token::RDelim("}"), "expected '}'")?;
+            Ok(ModuleDecl::new(name, items))
+        })
+    }
+
+    fn parse_module_items(&mut self) -> ParseResult<Vec<Item>> {
+        let mut items = vec![];
+        while self.peek_token() != &Token::RDelim("}") {
+            let item = self.parse_module_item()?;
+            if let Some(item) = item {
+                items.push(item);
+            }
+            if self.peek_token() != &Token::RDelim("}") {
+                self.expect(Token::NewLine, "expected newline")?;
+            }
+            self.consume_any(Token::Space);
+        }
+        Ok(items)
+    }
+
+    // module_item ::= [ <module_decl> | <const_decl> | <fn_decl> ]
+    fn parse_module_item(&mut self) -> ParseResult<Option<Item>> {
+        self.trace("parse_module_item", |parser| {
+            parser.consume_any(Token::Space);
+
+            let next_token = parser.peek_token();
+            let item = if next_token == &Token::Keyword(Keyword::Const) {
+                let decl = parser.parse_const_decl()?;
+                Some(Item::const_decl(decl))
+            } else if next_token == &Token::Keyword(Keyword::Fn) {
+                let decl = parser.parse_fn_decl()?;
+                Some(Item::fn_decl(decl))
+            } else if next_token == &Token::Keyword(Keyword::Module) {
+                let decl = parser.parse_module_decl()?;
+                Some(Item::module_decl(decl))
+            } else if next_token.is_eol() {
+                None
+            } else {
+                return Err(SyntaxError::new(
+                    "expected const, fn, or module declaration",
+                    parser.position(),
+                )
+                .into());
+            };
+
+            Ok(item)
         })
     }
 
@@ -312,6 +431,13 @@ impl<'a> Parser<'a> {
                     };
                     Directive::coerce(behavior)
                 }
+                "default_formatter" => {
+                    parser.expect(Token::Assign, "expected '='")?;
+                    parser.consume_any(Token::Space);
+                    let name = parser.parse_ident()?.as_spanned_ustr();
+                    Directive::default_formatter(name)
+                }
+                "builtin" => Directive::builtin(),
                 "float_conversion" => {
                     parser.expect(Token::Assign, "expected '='")?;
                     parser.consume_any(Token::Space);
@@ -336,6 +462,21 @@ impl<'a> Parser<'a> {
 
                     let prec = parser.parse_integer()?.to_u32_wrapping();
                     Directive::float_precision(prec)
+                }
+                "significant_figures" => {
+                    parser.expect(Token::Assign, "expected '='")?;
+                    parser.consume_any(Token::Space);
+
+                    let places = if parser.peek_token() == &Token::LDelim("(") {
+                        parser.expect(Token::LDelim("("), "expected '(' or integer")?;
+                        parser.consume_any(Token::Space);
+                        parser.expect(Token::RDelim(")"), "expected ')'")?;
+                        None
+                    } else {
+                        Some(parser.parse_integer()?.to_u32_wrapping())
+                    };
+
+                    Directive::significant_figures(places)
                 }
                 "precedence" => {
                     parser.expect(Token::Assign, "expected '='")?;
@@ -362,12 +503,6 @@ impl<'a> Parser<'a> {
                         }
                     };
                     Directive::unit_preference(preference)
-                }
-                "default_formatter" => {
-                    parser.expect(Token::Assign, "expected '='")?;
-                    parser.consume_any(Token::Space);
-                    let name = parser.parse_ident()?.as_spanned_ustr();
-                    Directive::default_formatter(name)
                 }
                 _ => {
                     let (directive, span) = directive.into_pair();
@@ -884,8 +1019,7 @@ impl<'a> Parser<'a> {
                 if parser.peek_token() == &Token::RDelim(")") {
                     // Empty unit expression.
                     let (_, rspan) = parser.expect(Token::RDelim(")"), "expected ')'")?;
-                    let span =
-                        SourceSpan::new(parser.source_id, lspan.start, rspan.end);
+                    let span = SourceSpan::new(parser.source_id, lspan.start, rspan.end);
                     return Ok(Expr::empty().with_span(span));
                 }
 
@@ -1123,8 +1257,16 @@ impl<'a> Parser<'a> {
                     let ty = parser.parse_type()?;
                     Some(Either::Right(ty))
                 };
+                parser.consume_any(Token::Space);
+                let is_optional = parser
+                    .consume_one(Token::Operator(Ustr::from("?")))
+                    .is_some();
 
-                Ok(Param::new(name, anno))
+                if is_optional {
+                    Ok(Param::optional(name, anno))
+                } else {
+                    Ok(Param::new(name, anno))
+                }
             } else if parser.consume_one(Token::TripleDot).is_some() {
                 Ok(Param::new_variadic(name))
             } else {
@@ -1262,9 +1404,7 @@ impl<'a> Parser<'a> {
                         )?;
                         Ty::tuple(types)
                     }
-                    _ => {
-                        Ty::handle(raw_ty.raw)
-                    }
+                    _ => Ty::handle(raw_ty.raw),
                 };
                 Ok(ty)
             }

@@ -35,6 +35,9 @@ pub trait Visitor<'a, S: Default, E>: Sized {
     fn visit_fn_decl(&mut self, decl: &mut FnDecl) -> Result<S, E> {
         decl.walk(self)
     }
+    fn visit_module_decl(&mut self, decl: &mut ModuleDecl) -> Result<S, E> {
+        decl.walk(self)
+    }
     fn visit_param(&mut self, param: &mut Param) -> Result<S, E> {
         param.walk(self)
     }
@@ -176,6 +179,7 @@ impl Visit for Item {
             ItemKind::OpDecl(decl) => decl.visit(visitor),
             ItemKind::ConstDecl(decl) => decl.visit(visitor),
             ItemKind::FnDecl(decl) => decl.visit(visitor),
+            ItemKind::ModuleDecl(decl) => decl.visit(visitor),
             ItemKind::Expr(expr) => visitor.visit_top_level_expr(expr),
         }
     }
@@ -249,6 +253,22 @@ impl Visit for FnDecl {
 
     fn walk<'a, V: Visitor<'a, S, E>, S: Default, E>(&mut self, visitor: &mut V) -> Result<S, E> {
         Ok(S::default())
+    }
+}
+
+impl Visit for ModuleDecl {
+    fn visit<'a, V: Visitor<'a, S, E>, S: Default, E>(
+        &mut self,
+        visitor: &mut V,
+    ) -> Result<S, E> {
+        visitor.visit_module_decl(self)
+    }
+
+    fn walk<'a, V: Visitor<'a, S, E>, S: Default, E>(
+        &mut self,
+        visitor: &mut V,
+    ) -> Result<S, E> {
+        self.items.visit(visitor)
     }
 }
 

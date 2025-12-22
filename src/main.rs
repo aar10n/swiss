@@ -47,21 +47,25 @@ fn main() -> io::Result<()> {
     let args = Args::parse();
     let mut sources = Vec::new();
     for path in args.file {
-        sources.push((path.clone(), read_from_file(&path)));
+        let base = source::swisspath_best_base(std::path::Path::new(&path));
+        sources.push((path.clone(), read_from_file(&path), base));
     }
 
     let has_expressions = !args.expr.is_empty();
     for expr in args.expr {
-        sources.push(("<expr>".to_owned(), expr));
+        sources.push(("<expr>".to_owned(), expr, None));
     }
 
     match args.input.as_deref() {
-        Some("-") => sources.push(("<stdin>".to_owned(), read_from_stdin())),
-        Some(file) => sources.push((file.to_owned(), read_from_file(file))),
+        Some("-") => sources.push(("<stdin>".to_owned(), read_from_stdin(), None)),
+        Some(file) => {
+            let base = source::swisspath_best_base(std::path::Path::new(file));
+            sources.push((file.to_owned(), read_from_file(file), base));
+        }
         None => {
             // If no expressions were provided via -e, read from stdin
             if !has_expressions && !args.interactive && !atty::is(Stream::Stdin) {
-                sources.push(("<stdin>".to_owned(), read_from_stdin()));
+                sources.push(("<stdin>".to_owned(), read_from_stdin(), None));
             }
         }
     };
@@ -76,8 +80,8 @@ fn main() -> io::Result<()> {
     }
 
     let module_id = ctx.modules.new_module("global").unwrap().id;
-    for (i, (path, source)) in sources.into_iter().enumerate() {
-        let source_id = ctx.sources.add_source(path, source);
+    for (i, (path, source, base)) in sources.into_iter().enumerate() {
+        let source_id = ctx.sources.add_source_with_base(path, source, base);
         let print_result = i == num_sources - 1 && !args.interactive;
         if let Err(()) = evaluate(&mut ctx, source_id, module_id, print_result) {
             std::process::exit(1);
@@ -148,41 +152,7 @@ fn evaluate(
         Ok(None) if print_result => {
             // Fallback: if interpretation returned None, try to use the last evaluated value
             // (e.g., when a trailing directive wipes the result).
-            if let Some(value) = ctx.take_last_value() {
-                use crate::print::DisplayString;
-                if let Some(buf) = ctx.take_pending_output() {
-                    return Ok(println!("{GREEN}RESULT:{RESET} {}", buf));
-                } else if let Some(fmt_name) = ctx.default_formatter.clone() {
-                    let fmt_span = SourceSpan::default();
-                    if let Ok(func) = ctx.modules[module_id]
-                        .resolve_function(Spanned::new(fmt_name, fmt_span))
-                        .cloned()
-                    {
-                        let io = IoHandle::buffer();
-                        let res = Context::with_active_module(ctx, module_id, |ctx| {
-                            crate::interp::call_function(
-                                ctx,
-                                &func,
-                                vec![value.clone(), Value::Handle(Handle::new("io".into(), io.clone()))],
-                            )
-                        });
-                        if res.is_ok() {
-                            if let Some(buf) = io.take_buffer() {
-                                if buf.ends_with('\n') {
-                                    return Ok(print!("{}", buf));
-                                } else {
-                                    return Ok(println!("{}", buf));
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Ok(println!(
-                    "{GREEN}RESULT:{RESET} {}",
-                    value.display_string(ctx)
-                ))
-            } else if let Some(buf) = ctx.take_pending_output() {
+            if let Some(buf) = ctx.take_pending_output() {
                 Ok(println!("{GREEN}RESULT:{RESET} {}", buf))
             } else {
                 Ok(println!("{GREEN}RESULT:{RESET} {YELLOW}None{RESET}"))

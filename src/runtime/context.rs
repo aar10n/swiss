@@ -97,6 +97,10 @@ impl Context {
         self.call_stack.last()
     }
 
+    pub fn call_stack_len(&self) -> usize {
+        self.call_stack.len()
+    }
+
     /// Apply the cached prelude declarations to the given module, seeding
     /// operator/unit/dimension/interface tables so parsing works the same
     /// across modules.
@@ -247,6 +251,37 @@ impl Context {
         }
     }
 
+    fn resolve_module_id(&self, path: impl PathLike) -> Result<ModuleId, NameError> {
+        let parts = path.parts();
+        if parts.is_empty() {
+            return Ok(self.active_module().unwrap().id);
+        }
+
+        if let Some(active) = self.active_module() {
+            if let Some(alias_id) = active.resolve_module_alias(parts[0].raw) {
+                if parts.len() == 1 {
+                    return Ok(alias_id);
+                }
+                let mut alias_path = self.modules.module_path(alias_id).clone();
+                alias_path.extend(parts.iter().skip(1).cloned());
+                if let Ok(module) = self.modules.get_module(alias_path) {
+                    return Ok(module.id);
+                }
+            }
+
+            let mut relative_path = self.modules.module_path(active.id).clone();
+            relative_path.extend(parts.iter().cloned());
+            if let Ok(module) = self.modules.get_module(relative_path) {
+                return Ok(module.id);
+            }
+        }
+
+        self.modules
+            .get_module(parts.clone())
+            .map(|module| module.id)
+            .map_err(|_| NameError::new("invalid module", parts.to_spanned_string()))
+    }
+
     pub fn resolve_variable(&mut self, path: impl PathLike) -> Result<ValueRef, NameError> {
         let name = path.base_part();
         let module_id = if path.len() == 1 {
@@ -257,7 +292,7 @@ impl Context {
             }
             self.active_module().unwrap().id
         } else {
-            self.modules.get_module(path.dir_parts())?.id
+            self.resolve_module_id(path.dir_parts())?
         };
 
         match self.modules.resolve_constant_in(module_id, name.clone()) {
@@ -276,10 +311,7 @@ impl Context {
         let (module_id, name) = if path.len() == 1 {
             (self.active_module().unwrap().id, path.base_part())
         } else {
-            (
-                self.modules.get_module(path.dir_parts())?.id,
-                path.base_part(),
-            )
+            (self.resolve_module_id(path.dir_parts())?, path.base_part())
         };
 
         self.modules.resolve_function_in(module_id, name)
@@ -298,7 +330,7 @@ pub struct RuntimeConfig {
     pub binary_coercion: BinaryCoercion,
     /// Coercion behavior.
     pub coercion: Coercion,
-    /// Number of decimal places to display for floating-point numbers.
+    /// Number of significant figures to display for floating-point numbers.
     /// If `None`, the number is automatically formatted.
     pub decimal_places: Option<u32>,
     /// The precision used internally for floating-point numbers.

@@ -59,6 +59,10 @@ impl Item {
         Self::new(ItemKind::FnDecl(decl.into()))
     }
 
+    pub fn module_decl(decl: ModuleDecl) -> Self {
+        Self::new(ItemKind::ModuleDecl(decl.into()))
+    }
+
     pub fn expr(expr: Expr) -> Self {
         Self::new(ItemKind::Expr(expr.into()))
     }
@@ -73,6 +77,7 @@ pub enum ItemKind {
     OpDecl(P<OpDecl>),
     ConstDecl(P<ConstDecl>),
     FnDecl(P<FnDecl>),
+    ModuleDecl(P<ModuleDecl>),
     Expr(P<Expr>),
 }
 
@@ -100,6 +105,10 @@ impl Directive {
         Self::new(DirectiveKind::FloatPrecision(prec))
     }
 
+    pub fn significant_figures(places: Option<u32>) -> Self {
+        Self::new(DirectiveKind::SignificantFigures(places))
+    }
+
     pub fn precedence(prec: isize) -> Self {
         Self::new(DirectiveKind::Precedence(prec))
     }
@@ -111,6 +120,10 @@ impl Directive {
     pub fn default_formatter(name: Spanned<Ustr>) -> Self {
         Self::new(DirectiveKind::DefaultFormatter(name))
     }
+
+    pub fn builtin() -> Self {
+        Self::new(DirectiveKind::Builtin)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -120,9 +133,11 @@ pub enum DirectiveKind {
     Coercion(Coercion),
     FloatConversion(FloatConversion),
     FloatPrecision(u32),
+    SignificantFigures(Option<u32>),
     Precedence(isize),
     UnitPreference(UnitPreference),
     DefaultFormatter(Spanned<Ustr>),
+    Builtin,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -379,6 +394,7 @@ pub struct FnDecl {
     pub params: ListNode<Param>,
     pub body: ListNode<Stmt>,
     pub ret: Option<Either<DimExpr, Ty>>,
+    pub is_builtin_wrapper: bool,
 }
 
 impl FnDecl {
@@ -395,6 +411,27 @@ impl FnDecl {
             params,
             body,
             ret,
+            is_builtin_wrapper: false,
+        }
+    }
+}
+
+/// A module declaration.
+#[derive(Clone, Debug)]
+pub struct ModuleDecl {
+    id: NodeId,
+    span: SourceSpan,
+    pub name: Ident,
+    pub items: Vec<Item>,
+}
+
+impl ModuleDecl {
+    pub fn new(name: Ident, items: Vec<Item>) -> Self {
+        Self {
+            id: node_id::next(),
+            span: SourceSpan::default(),
+            name,
+            items,
         }
     }
 }
@@ -407,6 +444,7 @@ pub struct Param {
     pub name: Ident,
     pub anno: Option<Either<DimExpr, Ty>>,
     pub is_variadic: bool,
+    pub is_optional: bool,
 }
 
 impl Param {
@@ -417,6 +455,7 @@ impl Param {
             name,
             anno,
             is_variadic: false,
+            is_optional: false,
         }
     }
 
@@ -427,6 +466,18 @@ impl Param {
             name,
             anno: None,
             is_variadic: true,
+            is_optional: false,
+        }
+    }
+
+    pub fn optional(name: Ident, anno: Option<Either<DimExpr, Ty>>) -> Self {
+        Self {
+            id: node_id::next(),
+            span: SourceSpan::default(),
+            name,
+            anno,
+            is_variadic: false,
+            is_optional: true,
         }
     }
 
@@ -1039,6 +1090,8 @@ impl_identifiable!(ConstDecl);
 impl_spannable!(ConstDecl);
 impl_identifiable!(FnDecl);
 impl_spannable!(FnDecl);
+impl_identifiable!(ModuleDecl);
+impl_spannable!(ModuleDecl);
 impl_identifiable!(Param);
 impl_spannable!(Param);
 impl_identifiable!(Operator);

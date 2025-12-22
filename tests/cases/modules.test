@@ -1,0 +1,27 @@
+WORKDIR: ${FILE_DIR}/../testdata/
+
+INCLUDE: prelude.ch
+SWISSPATH: ${FILE_DIR}/../testdata:${FILE_DIR}/../..
+
+TEST: module declaration scopes items
+INPUT: {
+  3
+}
+EXPECT: 3
+
+TEST: module can access parent declarations
+INPUT: {
+  const base_val = 10
+  module math {
+    const twice = base_val * 2
+  }
+  math::twice
+}
+EXPECT: 20
+
+TEST: import submodule exposes alias
+INPUT: {
+  import my_module::io
+  io::answer
+}
+EXPECT: 8

@@ -2,7 +2,7 @@ INCLUDE: prelude.ch
 
 TEST: Directive at EOF
 INPUT: #[float_precision=32]
-EXPECT: ()
+EXPECT: None
 
 TEST: Float precision valid
 INPUT: {
@@ -24,3 +24,95 @@ INPUT: {
   1 + 2
 }
 EXPECT_ERROR: float_precision must be between 1 and 1024
+
+TEST: Significant figures valid
+INPUT: {
+  #[significant_figures=4]
+  1 / 3
+}
+EXPECT: 0.3333
+
+TEST: Significant figures none
+INPUT: {
+  #[significant_figures=4]
+  #[significant_figures=()]
+  1 / 3
+}
+EXPECT: 0.3333333333333333
+
+TEST: Significant figures zero
+INPUT: {
+  #[significant_figures=0]
+  1 / 3
+}
+EXPECT_ERROR: significant_figures must be between 1 and 1024
+
+TEST: Significant figures too large
+INPUT: {
+  #[significant_figures=2048]
+  1 / 3
+}
+EXPECT_ERROR: significant_figures must be between 1 and 1024
+
+//
+// #[builtin] directive tests
+//
+
+TEST: Builtin wrapper basic
+INPUT: {
+  #[builtin]
+  fn my_len(v: any) { builtin::len(v) }
+  my_len([1, 2, 3])
+}
+EXPECT: 3
+
+TEST: Builtin wrapper with literal args
+INPUT: {
+  #[builtin]
+  fn fixed_len(v: any) { builtin::len([1, 2, 3, 4]) }
+  fixed_len(123)
+}
+EXPECT: 4
+
+TEST: Builtin wrapper with named args
+INPUT: {
+  #[builtin]
+  fn my_len(v: any) { builtin::len(v = v) }
+  my_len((1, 2, 3))
+}
+EXPECT: 3
+
+TEST: Builtin wrapper not followed by fn
+INPUT: {
+  #[builtin]
+  1 + 2
+}
+EXPECT_ERROR: expected fn declaration after '#[builtin]'
+
+TEST: Builtin wrapper with non-call body
+INPUT: {
+  #[builtin]
+  fn bad(v: any) { v }
+  bad(1)
+}
+EXPECT_ERROR: builtin wrappers must call a builtin function
+
+TEST: Builtin wrapper with multiple statements
+INPUT: {
+  #[builtin]
+  fn bad(v: any) {
+    builtin::len(v)
+    v
+  }
+  bad([1])
+}
+EXPECT_ERROR: builtin wrappers must contain one call expression
+
+TEST: Builtin wrapper calls non-builtin
+INPUT: {
+  fn helper(v: any) { v }
+  #[builtin]
+  fn bad(v: any) { helper(v) }
+  bad(1)
+}
+EXPECT_ERROR: builtin wrappers must target a builtin function

@@ -6,6 +6,10 @@
 ;   (0 > N <= 1024)
 #[float_precision=53]
 
+; Sets the number of significant figures used when displaying floats. Option<N u32>
+;   (0 > N <= 1024) | () = auto
+#[significant_figures=()]
+
 ; Controls how floats are converted to integers.
 ;   trunc  - Truncate towards zero.
 ;   round  - Round to the nearest integer.
@@ -91,9 +95,10 @@ infix operator (&)(num,num) = builtin::bit_and
 #[precedence=10]
 infix operator (^)(num,num) = builtin::pow
 #[precedence=11]
-infix operator (.)(any,any) = builtin::method_call
-infix operator ([])(any,any) = builtin::index
 infix operator (->)(num,unit) = builtin::unit_cast
+#[precedence=12]
+infix operator ([])(any,any) = builtin::index
+infix operator (.)(any,any) = builtin::method_call
 
 ;
 ; Dimensions and Units
@@ -273,22 +278,30 @@ const phi = 1.61803398874989484820
 ; General Functions
 ;
 
+#[builtin]
+fn dir(x: any?) { builtin::dir(x) }
+#[builtin]
 fn len(v: any) { builtin::len(v) }
+#[builtin]
 fn print(v...) { builtin::print(v...) }
+#[builtin]
 fn reverse(v: any) { builtin::reverse(v) }
+#[builtin]
 fn delete(obj: object, key: str) { builtin::delete(obj, key) }
+#[builtin]
 fn append(list: list, item: any) { builtin::append(list, item) }
+#[builtin]
 fn open(path: str) { builtin::open(path) }
 
+#[builtin]
 fn write(io, v: any) { builtin::write(io, v) }
+#[builtin]
 fn writeln(io, v: any) { builtin::writeln(io, v) }
 
-fn encode(name, value) { builtin::encode(name, value) }
-fn decode(name, text) { builtin::decode(name, text) }
-
+#[builtin]
 fn json_encode(value) { builtin::json_encode(value) }
+#[builtin]
 fn json_decode(text) { builtin::json_decode(text) }
-builtin::register_encoding("json", json_encode, json_decode)
 
 ; Formatters
 

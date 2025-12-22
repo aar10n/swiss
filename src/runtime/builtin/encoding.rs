@@ -7,28 +7,8 @@ use std::str::FromStr;
 use ustr::Ustr;
 
 pub(super) fn register(ctx: &mut Context) {
-    let encoding_interface = builtin_interface!["encoding"
-        encode: (any) -> str;
-        decode: (str) -> any;
-    ];
-
     ctx.get_module_mut("builtin")
         .expect("builtin module should exist")
-        .with_interface(encoding_interface)
-        .with_function(
-            builtin_fn_v2!("register_encoding", |&ctx, name: str, encode_fn: fn, decode_fn: fn| {
-                register_encoding(ctx, name, encode_fn, decode_fn)?;
-                Ok(Value::default())
-            }),
-        )
-        .with_function(builtin_fn_v2!("encode", |&ctx, name: str, value: any| {
-            let result = dispatch_encode(ctx, name.as_str(), value)?;
-            Ok(result)
-        }))
-        .with_function(builtin_fn_v2!("decode", |&ctx, name: str, text: str| {
-            let result = dispatch_decode(ctx, name.as_str(), text)?;
-            Ok(result)
-        }))
         .with_function(builtin_fn_v2!("json_encode", |&ctx, value: any| {
             let json = value_to_json(ctx, &value)?;
             Ok(Value::String(json.to_string()))

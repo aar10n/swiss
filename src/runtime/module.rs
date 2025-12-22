@@ -29,6 +29,8 @@ pub struct Module {
     pub prelude_applied: bool,
     /// Modules whose declarations are visible for lookup (e.g., preludes).
     pub opened: Vec<ModuleId>,
+    /// Aliases to other modules (imported sub-modules).
+    pub module_aliases: BTreeMap<Ustr, (ModuleId, SourceSpan)>,
     pub names: NameTable,
     pub dimensions: DimensionTable,
     pub interfaces: InterfaceTable,
@@ -46,6 +48,7 @@ impl Module {
             name,
             prelude_applied: false,
             opened: Vec::new(),
+            module_aliases: BTreeMap::new(),
             names: NameTable::new(),
             dimensions: DimensionTable::new(),
             interfaces: InterfaceTable::new(),
@@ -155,6 +158,31 @@ impl Module {
         Ok(())
     }
 
+    pub fn register_module_alias(
+        &mut self,
+        name: Spanned<Ustr>,
+        module_id: ModuleId,
+    ) -> Result<(), DeclError> {
+        if let Some((existing_id, existing_span)) = self.module_aliases.get(&name.raw) {
+            if *existing_id == module_id {
+                return Ok(());
+            }
+            return Err(DeclError::new(
+                "module",
+                name.to_string_inner(),
+                *existing_span,
+            ));
+        }
+
+        self.module_aliases
+            .insert(name.raw, (module_id, name.span));
+        Ok(())
+    }
+
+    pub fn resolve_module_alias(&self, name: Ustr) -> Option<ModuleId> {
+        self.module_aliases.get(&name).map(|(id, _)| *id)
+    }
+
     /// Update an existing unit (used during interpretation to replace placeholder units)
     pub fn update_unit(&mut self, unit: Unit) {
         // Register in conversion graph
@@ -253,6 +281,7 @@ impl From<(usize, Ustr)> for Module {
 pub struct ModuleMap {
     module_tree: PathTree<Module>,
     module_to_index: BTreeMap<ModuleId, usize>,
+    module_paths: Vec<SmallVec<[Spanned<Ustr>; 4]>>,
 }
 
 impl ModuleMap {
@@ -260,6 +289,7 @@ impl ModuleMap {
         Self {
             module_tree: PathTree::new(),
             module_to_index: BTreeMap::new(),
+            module_paths: Vec::new(),
         }
     }
 
@@ -287,25 +317,34 @@ impl ModuleMap {
 
     pub fn new_module(&mut self, path: impl PathLike) -> Result<&mut Module, NameError> {
         let index = self.module_tree.len();
+        let parts = path.parts();
         let module = self
             .module_tree
             .insert(path)
             .map_err(|spanned| NameError::new("invalid module", spanned))?;
 
         self.module_to_index.insert(module.id, index);
+        self.module_paths.push(parts);
         Ok(module)
     }
 
     pub fn get_or_add_module(&mut self, path: impl PathLike) -> Result<&mut Module, NameError> {
         let next_index = self.module_tree.len();
+        let parts = path.parts();
         let (module, index) = self
             .module_tree
             .get_or_insert(path)
             .map_err(|spanned| NameError::new("invalid module", spanned))?;
         if index == next_index {
             self.module_to_index.insert(module.id, index);
+            self.module_paths.push(parts);
         }
         Ok(module)
+    }
+
+    pub fn module_path(&self, module_id: ModuleId) -> &SmallVec<[Spanned<Ustr>; 4]> {
+        let index = self.module_to_index[&module_id];
+        &self.module_paths[index]
     }
 
     // Overlay resolution that honors a module's opened list.

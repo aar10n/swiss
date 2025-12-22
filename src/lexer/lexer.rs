@@ -23,7 +23,7 @@ static IDENTIFIER_CHARS_EXTRA: CharSet = CharSet::new()
 
 #[dynamic]
 static OPERATOR_CHARS: CharSet = CharSet::new()
-    .add_chars("+-*/!$%^&|<>~:=@$.")
+    .add_chars("+-*/!$%^&|<>~:=@$.?")
     .add_chars("¬±×÷")
     .add_range('\u{2200}'..='\u{22FF}') // Mathematical Operators block
     .add_range('\u{2A00}'..='\u{2AFF}') // Supplemental Mathematical Operators block

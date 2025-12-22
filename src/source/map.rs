@@ -32,7 +32,15 @@ impl SourceMap {
     }
 
     pub fn load_source(&mut self, file_name: &str) -> std::io::Result<SourceId> {
-        let source = SourceFile::from_file(file_name)?;
+        self.load_source_with_base(file_name, None)
+    }
+
+    pub fn load_source_with_base(
+        &mut self,
+        file_name: &str,
+        module_base: Option<std::path::PathBuf>,
+    ) -> std::io::Result<SourceId> {
+        let source = SourceFile::from_file_with_base(file_name, module_base)?;
         let id = source.id();
         self.sources.insert(id, source);
         self.names.insert(file_name.to_owned(), id);
@@ -40,8 +48,17 @@ impl SourceMap {
     }
 
     pub fn add_source(&mut self, name: String, source: String) -> SourceId {
+        self.add_source_with_base(name, source, None)
+    }
+
+    pub fn add_source_with_base(
+        &mut self,
+        name: String,
+        source: String,
+        module_base: Option<std::path::PathBuf>,
+    ) -> SourceId {
         let id = source_id::next();
-        let file = SourceFile::new(id, name.clone(), source);
+        let file = SourceFile::new_with_base(id, name.clone(), source, module_base);
         self.sources.insert(id, file);
         self.names.insert(name, id);
         id

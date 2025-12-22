@@ -121,4 +121,11 @@ impl HandleMethodRegistry {
     pub fn get(&self, tag: Ustr, name: Ustr) -> Option<Function> {
         self.methods.get(&tag).and_then(|m| m.get(&name).cloned())
     }
+
+    pub fn names_for(&self, tag: Ustr) -> Vec<Ustr> {
+        self.methods
+            .get(&tag)
+            .map(|methods| methods.keys().cloned().collect())
+            .unwrap_or_default()
+    }
 }

@@ -146,6 +146,7 @@ impl PrettyPrint<Context> for Function {
         match &self.kind {
             FunctionKind::Native(_) => write!(out, "{KIND}native{RESET}"),
             FunctionKind::Source(_) => write!(out, "{KIND}source{RESET}"),
+            FunctionKind::BuiltinWrapper { .. } => write!(out, "{KIND}builtin_wrapper{RESET}"),
         }
     }
 }
@@ -154,6 +155,12 @@ impl PrettyPrint<Context> for Function {
 pub enum FunctionKind {
     Native(NativeFn),
     Source(ListNode<Stmt>),
+    BuiltinWrapper {
+        target_name: Spanned<Ustr>,
+        target_params: Vec<Param>,
+        target_fn: NativeFn,
+        args: ListNode<Expr>,
+    },
 }
 
 impl Debug for FunctionKind {
@@ -161,6 +168,7 @@ impl Debug for FunctionKind {
         match self {
             Self::Native(arg0) => f.write_str("Native"),
             Self::Source(arg0) => f.write_str("Source"),
+            Self::BuiltinWrapper { .. } => f.write_str("BuiltinWrapper"),
         }
     }
 }
@@ -172,6 +180,7 @@ pub struct Param {
     pub name: Spanned<Ustr>,
     pub ty: Option<Spanned<Ty>>,
     pub variadic: bool,
+    pub optional: bool,
 }
 
 impl Param {
@@ -180,6 +189,25 @@ impl Param {
             name,
             ty,
             variadic: false,
+            optional: false,
+        }
+    }
+
+    pub fn optional(name: Spanned<Ustr>, ty: Option<Spanned<Ty>>) -> Self {
+        Self {
+            name,
+            ty,
+            variadic: false,
+            optional: true,
+        }
+    }
+
+    pub fn optional_from(name: Ustr, ty: Option<Ty>) -> Self {
+        Self {
+            name: Spanned::new(name, SourceSpan::default()),
+            ty: ty.map(|ty| Spanned::new(ty, SourceSpan::default())),
+            variadic: false,
+            optional: true,
         }
     }
 
@@ -188,6 +216,7 @@ impl Param {
             name,
             ty: None,
             variadic: true,
+            optional: false,
         }
     }
 
@@ -195,13 +224,22 @@ impl Param {
         self.variadic
     }
 
+    pub fn is_optional(&self) -> bool {
+        self.optional
+    }
+
     pub fn type_string(&self) -> String {
         if self.variadic {
             return "...".to_string();
         }
-        match &self.ty {
+        let ty = match &self.ty {
             Some(ty) => ty.raw.to_string(),
             None => Ty::Any.to_string(),
+        };
+        if self.optional {
+            format!("{}?", ty)
+        } else {
+            ty
         }
     }
 }
@@ -212,6 +250,7 @@ impl From<(Ustr, Option<Ty>)> for Param {
             name: Spanned::new(name, SourceSpan::default()),
             ty: ty.map(|ty| Spanned::new(ty, SourceSpan::default())),
             variadic: false,
+            optional: false,
         }
     }
 }
@@ -228,6 +267,9 @@ impl PrettyPrint<Context> for Param {
             write!(out, "{PUNCT}...{RESET}")?;
         } else if let Some(ty) = &self.ty {
             write!(out, "{COLON} {DIMENSION}{}{RESET}", ty.pretty_string(ctx))?;
+        }
+        if self.optional {
+            write!(out, "{PUNCT}?{RESET}")?;
         }
         Ok(())
     }
@@ -385,6 +427,10 @@ impl NameTable {
                 Right(funcs) => Some(funcs.iter()),
             })
             .flatten()
+    }
+
+    pub fn iter_names(&self) -> impl Iterator<Item = Ustr> + '_ {
+        self.names.keys().cloned()
     }
 }
 

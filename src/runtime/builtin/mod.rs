@@ -1,4 +1,5 @@
 use crate::print::{DisplayString, PrettyString};
+use ustr::Ustr;
 
 pub(super) use super::context::Context;
 pub(super) use super::exception::Exception;
@@ -7,10 +8,12 @@ pub(super) use super::name::{Function, Param};
 pub(super) use super::value::{
     CastFrom, CastInto, Dim, Float, Integer, Number, Numeric, Quantity, Ty, VRef, Value, ValueRef,
 };
-pub(super) use super::{Conversion, IoHandle};
+pub(super) use super::{Conversion, IoHandle, ModuleId};
 
 #[rustfmt::skip]
 macro_rules! builtin_ty_v2 {
+    (& $t:ident ?) => { builtin_ty_v2!(& $t) };
+    ($t:ident ?) => { builtin_ty_v2!($t) };
     (& $($rest:tt)*) => { crate::runtime::Ty::Ref(Box::new(builtin_ty_v2!($($rest)*))) };
     (int) => { crate::runtime::Ty::Int };
     (float) => { crate::runtime::Ty::Float };
@@ -29,6 +32,8 @@ macro_rules! builtin_ty_v2 {
 
 #[rustfmt::skip]
 macro_rules! builtin_type_v2 {
+    (& $t:ident ?) => { Option<&mut builtin_type_v2!($t)> };
+    ($t:ident ?) => { Option<builtin_type_v2!($t)> };
     (& $($rest:tt)*) => { &mut builtin_type_v2!($($rest)*) };
     (any) => { crate::runtime::Value };
     (int) => { crate::runtime::Integer };
@@ -49,11 +54,23 @@ macro_rules! builtin_fn_v2 {
     (__params ($($acc:tt)*) ... $p:ident | $($rest:tt)*) => {
         vec![$($acc)* crate::runtime::Param::variadic(stringify!($p).into())]
     };
+    (__params ($($acc:tt)*) $p:ident : & $t:ident ? | $($rest:tt)*) => {
+        vec![$($acc)* crate::runtime::Param::optional_from(stringify!($p).into(), Some(builtin_ty_v2!(& $t)))]
+    };
+    (__params ($($acc:tt)*) $p:ident : $t:ident ? | $($rest:tt)*) => {
+        vec![$($acc)* crate::runtime::Param::optional_from(stringify!($p).into(), Some(builtin_ty_v2!($t)))]
+    };
     (__params ($($acc:tt)*) $p:ident : & $t:ident | $($rest:tt)*) => {
         vec![$($acc)* crate::runtime::Param::from((stringify!($p).into(), Some(builtin_ty_v2!(& $t))))]
     };
     (__params ($($acc:tt)*) $p:ident : $t:ident | $($rest:tt)*) => {
         vec![$($acc)* crate::runtime::Param::from((stringify!($p).into(), Some(builtin_ty_v2!($t))))]
+    };
+    (__params ($($acc:tt)*) $p:ident : & $t:ident ?, $($rest:tt)*) => {
+        builtin_fn_v2!(__params ($($acc)* crate::runtime::Param::optional_from(stringify!($p).into(), Some(builtin_ty_v2!(& $t))),) $($rest)*)
+    };
+    (__params ($($acc:tt)*) $p:ident : $t:ident ?, $($rest:tt)*) => {
+        builtin_fn_v2!(__params ($($acc)* crate::runtime::Param::optional_from(stringify!($p).into(), Some(builtin_ty_v2!($t))),) $($rest)*)
     };
     (__params ($($acc:tt)*) $p:ident : & $t:ident, $($rest:tt)*) => {
         builtin_fn_v2!(__params ($($acc)* crate::runtime::Param::from((stringify!($p).into(), Some(builtin_ty_v2!(& $t)))),) $($rest)*)
@@ -65,11 +82,23 @@ macro_rules! builtin_fn_v2 {
     (__closure ($($acc:tt)*) ... $p:ident | $($rest:tt)*) => {
         |$($acc)* $p: builtin_type_v2!(...)| -> Result<_, Exception> { $($rest)* }
     };
+    (__closure ($($acc:tt)*) $p:ident : & $t:ident ? | $($rest:tt)*) => {
+        |$($acc)* $p: builtin_type_v2!(& $t ?)| -> Result<_, crate::runtime::Exception> { $($rest)* }
+    };
+    (__closure ($($acc:tt)*) $p:ident : $t:ident ? | $($rest:tt)*) => {
+        |$($acc)* $p: builtin_type_v2!($t ?)| -> Result<_, crate::runtime::Exception> { $($rest)* }
+    };
     (__closure ($($acc:tt)*) $p:ident : & $t:ident | $($rest:tt)*) => {
         |$($acc)* $p: builtin_type_v2!(& $t)| -> Result<_, crate::runtime::Exception> { $($rest)* }
     };
     (__closure ($($acc:tt)*) $p:ident : $t:ident | $($rest:tt)*) => {
         |$($acc)* $p: builtin_type_v2!($t)| -> Result<_, crate::runtime::Exception> { $($rest)* }
+    };
+    (__closure ($($acc:tt)*) $p:ident : & $t:ident ?, $($rest:tt)*) => {
+        builtin_fn_v2!(__closure ($($acc)* $p: builtin_type_v2!(& $t ?),) $($rest)*)
+    };
+    (__closure ($($acc:tt)*) $p:ident : $t:ident ?, $($rest:tt)*) => {
+        builtin_fn_v2!(__closure ($($acc)* $p: builtin_type_v2!($t ?),) $($rest)*)
     };
     (__closure ($($acc:tt)*) $p:ident : & $t:ident, $($rest:tt)*) => {
         builtin_fn_v2!(__closure ($($acc)* $p: builtin_type_v2!(& $t),) $($rest)*)
@@ -80,6 +109,22 @@ macro_rules! builtin_fn_v2 {
 
     (__invoke ($($deferred:tt)*) $res:ident $f:ident ($ctx:ident, $args:expr, $($acc:tt)*) ... $p:ident | $($rest:tt)*) => {
         let $p = crate::runtime::builtin::take_varargs($ctx, $args)?;
+        $res = $f($ctx, $($acc)* $p)?;
+        $($deferred)*
+    };
+    (__invoke ($($deferred:tt)*) $res:ident $f:ident ($ctx:ident, $args:expr, $($acc:tt)*) $p:ident : & $t:ident ? | $($rest:tt)*) => {paste::paste!{
+        let [< $p _ref_opt >] = crate::runtime::builtin::take_optional_arg::<crate::runtime::ValueRef>($ctx, stringify!($p), $args)?;
+        if let Some([< $p _ref >]) = [< $p _ref_opt >] {
+            let mut $p = crate::runtime::CastInto::<builtin_type_v2!($t)>::cast($ctx, [< $p _ref >].borrow().clone())?;
+            $res = $f($ctx, $($acc)* Some(&mut $p))?;
+            [< $p _ref >].set($p.into());
+        } else {
+            $res = $f($ctx, $($acc)* None)?;
+        }
+        $($deferred)*
+    }};
+    (__invoke ($($deferred:tt)*) $res:ident $f:ident ($ctx:ident, $args:expr, $($acc:tt)*) $p:ident : $t:ident ? | $($rest:tt)*) => {
+        let $p = crate::runtime::builtin::take_optional_arg::<builtin_type_v2!($t)>($ctx, stringify!($p), $args)?;
         $res = $f($ctx, $($acc)* $p)?;
         $($deferred)*
     };
@@ -100,8 +145,21 @@ macro_rules! builtin_fn_v2 {
         let mut $p = crate::runtime::CastInto::<builtin_type_v2!($t)>::cast($ctx, [< $p _ref >].borrow().clone())?;
         builtin_fn_v2!(__invoke ($($deferred)* [<$p _ref>].set($p.into());) $res $f ($ctx, $args, $($acc)* &mut $p,) $($rest)*)
     }};
+    (__invoke ($($deferred:tt)*) $res:ident $f:ident ($ctx:ident, $args:expr, $($acc:tt)*) $p:ident : & $t:ident ?, $($rest:tt)*) => {paste::paste!{
+        let [< $p _ref_opt >] = crate::runtime::builtin::take_optional_arg::<crate::runtime::ValueRef>($ctx, stringify!($p), $args)?;
+        if let Some([< $p _ref >]) = [< $p _ref_opt >] {
+            let mut $p = crate::runtime::CastInto::<builtin_type_v2!($t)>::cast($ctx, [< $p _ref >].borrow().clone())?;
+            builtin_fn_v2!(__invoke ($($deferred)* [<$p _ref>].set($p.into());) $res $f ($ctx, $args, $($acc)* Some(&mut $p),) $($rest)*)
+        } else {
+            builtin_fn_v2!(__invoke ($($deferred)*) $res $f ($ctx, $args, $($acc)* None,) $($rest)*)
+        }
+    }};
     (__invoke ($($deferred:tt)*) $res:ident $f:ident ($ctx:ident, $args:expr, $($acc:tt)*) $p:ident : $t:ident, $($rest:tt)*) => {
         let $p = crate::runtime::builtin::take_arg::<builtin_type_v2!($t)>($ctx, stringify!($p), $args)?;
+        builtin_fn_v2!(__invoke ($($deferred)*) $res $f ($ctx, $args, $($acc)* $p,) $($rest)*)
+    };
+    (__invoke ($($deferred:tt)*) $res:ident $f:ident ($ctx:ident, $args:expr, $($acc:tt)*) $p:ident : $t:ident ?, $($rest:tt)*) => {
+        let $p = crate::runtime::builtin::take_optional_arg::<builtin_type_v2!($t)>($ctx, stringify!($p), $args)?;
         builtin_fn_v2!(__invoke ($($deferred)*) $res $f ($ctx, $args, $($acc)* $p,) $($rest)*)
     };
 
@@ -226,6 +284,23 @@ pub(crate) fn take_arg<T: CastFrom<Value>>(
     }
 }
 
+pub(crate) fn take_optional_arg<T: CastFrom<Value>>(
+    ctx: &Context,
+    _param: &str,
+    args: &mut Vec<Value>,
+) -> Result<Option<T>, Exception> {
+    if args.is_empty() {
+        return Ok(None);
+    }
+
+    let value = args.remove(0);
+    if matches!(value, Value::Empty) {
+        return Ok(None);
+    }
+
+    T::cast(ctx, value).map(Some)
+}
+
 pub(crate) fn take_varargs(ctx: &Context, args: &mut Vec<Value>) -> Result<Vec<Value>, Exception> {
     Ok(args.drain(..).collect())
 }
@@ -234,6 +309,74 @@ pub fn register_builtin_module(ctx: &mut Context) {
     ctx.modules
         .new_module("builtin")
         .unwrap()
+        .with_function(builtin_fn_v2!("dir", |&ctx, v: any?| {
+            let mut names: Vec<String> = Vec::new();
+
+            let mut collect_module_names = |module: &Module| {
+                names.extend(module.names.iter_names().map(|name| name.to_string()));
+                names.extend(
+                    module
+                        .module_aliases
+                        .keys()
+                        .map(|name| name.to_string()),
+                );
+                for module_id in &module.opened {
+                    names.extend(
+                        ctx.modules[*module_id]
+                            .names
+                            .iter_names()
+                            .map(|name| name.to_string()),
+                    );
+                }
+            };
+
+            let value = match v {
+                Some(value) => value,
+                None => {
+                    if let Some(module) = ctx.active_module() {
+                        let in_function = ctx.call_stack_len() > 1;
+                        if !in_function {
+                            collect_module_names(module);
+                        }
+                        for scope in ctx.local_scopes() {
+                            names.extend(scope.vars().keys().map(|name| name.to_string()));
+                        }
+                    }
+                    names.sort();
+                    names.dedup();
+                    let values = names.into_iter().map(Value::String).collect();
+                    return Ok(Value::list(values));
+                }
+            };
+
+            let value = match value {
+                Value::Ref(r) => r.borrow().clone(),
+                other => other,
+            };
+
+            match value {
+                Value::Handle(handle) => {
+                    if handle.tag() == Ustr::from("module") {
+                        let module_id = handle.borrow::<ModuleId>(Ustr::from("module"), ctx)?;
+                        let module = &ctx.modules[*module_id];
+                        collect_module_names(module);
+                    } else {
+                        names.extend(
+                            ctx.handle_methods
+                                .names_for(handle.tag())
+                                .into_iter()
+                                .map(|name| name.to_string()),
+                        );
+                    }
+                }
+                _ => {}
+            }
+
+            names.sort();
+            names.dedup();
+            let values = names.into_iter().map(Value::String).collect();
+            Ok(Value::list(values))
+        }))
         .with_function(builtin_fn_v2!("typeof", |&ctx, v: any| Ok(v
             .ty()
             .to_string())))

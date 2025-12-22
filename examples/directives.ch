@@ -9,6 +9,9 @@
 ; Sets the precision used for floating point calculations. <u32>
 #[float_precision=0]
 
+; Sets the number of significant figures displayed in results. <u32> | ()
+#[significant_figures=0]
+
 ; Controls how floats are converted to integers.
 ;   trunc  - Truncate towards zero.
 ;   round  - Round to the nearest integer.

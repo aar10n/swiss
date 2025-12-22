@@ -68,6 +68,18 @@ pub fn eval_source(
 /// Evaluate all prelude files (if any) and cache their modules in the context.
 pub fn eval_preludes(ctx: &mut Context) -> Result<(), ()> {
     let prelude_paths = ctx.config.prelude_files.clone();
+    if prelude_paths.is_empty() {
+        return Ok(());
+    }
+
+    let prelude_module_id = match ctx.modules.get_or_add_module("prelude") {
+        Ok(module) => module.id,
+        Err(err) => {
+            let _ = err.into_error().print_stderr(ctx);
+            return Err(());
+        }
+    };
+
     for path in prelude_paths {
         let source = match std::fs::read_to_string(&path) {
             Ok(code) => code,
@@ -78,24 +90,18 @@ pub fn eval_preludes(ctx: &mut Context) -> Result<(), ()> {
         };
 
         let source_id = ctx.sources.add_source(path.clone(), source);
-        let module_path = ctx.sources[source_id].module_path();
 
-        let module = match ctx.modules.get_or_add_module(module_path.clone()) {
-            Ok(module) => module,
-            Err(err) => {
-                let _ = err.into_error().print_stderr(ctx);
-                return Err(());
-            }
-        };
-        let module_id = module.id;
-
-        match eval_source(ctx, source_id, module_id) {
-            Ok(_) => ctx.prelude_modules.push(module_id),
+        match eval_source(ctx, source_id, prelude_module_id) {
+            Ok(_) => {}
             Err(err) => {
                 let _ = err.print_stderr(ctx);
                 return Err(());
             }
         }
+    }
+
+    if !ctx.prelude_modules.contains(&prelude_module_id) {
+        ctx.prelude_modules.push(prelude_module_id);
     }
 
     Ok(())

@@ -14,12 +14,12 @@ use crate::{lexer, parser};
 use either::{Either, Left, Right};
 use rug::{Float, Integer};
 use smallvec::{smallvec, SmallVec};
-use std::path::PathBuf;
 use std::rc::Rc;
 use ustr::Ustr;
 
 const TABWIDTH: &str = "    ";
 const MAX_FLOAT_PRECISION: u32 = 1024;
+const MAX_SIGNIFICANT_FIGURES: u32 = 1024;
 
 macro_rules! trace {
     ($self:ident, $intrp:expr, $msg:expr, $expr:expr) => {{
@@ -107,41 +107,34 @@ impl<'ctx> Interpreter<'ctx> {
             return Ok(*id);
         }
 
-        // Fall back to loading from disk. Use the current file's directory (if known) as the base.
+        // Fall back to loading from disk using SWISSPATH search roots.
         let relative = module_path
             .iter()
             .map(|part| part.raw.as_str())
             .collect::<Vec<_>>()
             .join("/");
-
-        let base_dir = self
-            .current_source
-            .and_then(|sid| {
-                let path = self.ctx.sources[sid].name();
-                let path = std::path::Path::new(path);
-                path.parent().map(|p| p.to_path_buf())
-            })
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-
-        let mut candidate = base_dir.join(&relative);
-        candidate.set_extension("ch");
-        let path_str = candidate.to_string_lossy().to_string();
-
-        self.ctx.sources.load_source(&path_str).map_err(|err| {
-            let err = NameError::new("module not found", module_path.to_spanned_string())
-                .with_extra(err.to_string());
-            InterpError::from(err)
-        })
-    }
-
-    fn import_module(&mut self, path: &Path) -> InterpResult<ModuleId> {
-        let module_path = path.path_parts();
-
-        if let Ok(module) = self.ctx.modules.get_module(module_path.clone()) {
-            return Ok(module.id);
+        for base_dir in crate::source::swisspath_dirs() {
+            let mut candidate = base_dir.join(&relative);
+            candidate.set_extension("ch");
+            let path_str = candidate.to_string_lossy().to_string();
+            if let Ok(source_id) =
+                self.ctx
+                    .sources
+                    .load_source_with_base(&path_str, Some(base_dir.clone()))
+            {
+                return Ok(source_id);
+            }
         }
 
-        let source_id = self.resolve_import_source(&module_path)?;
+        let err = NameError::new("module not found", module_path.to_spanned_string());
+        Err(InterpError::from(err))
+    }
+
+    fn load_module_from_source(
+        &mut self,
+        module_path: SmallVec<[Spanned<Ustr>; 4]>,
+        source_id: SourceId,
+    ) -> InterpResult<ModuleId> {
         let module_id = {
             let module = self
                 .ctx
@@ -163,6 +156,40 @@ impl<'ctx> Interpreter<'ctx> {
         // Evaluate the imported module in its own context first.
         crate::interp::interpret(self.ctx, &ast_module)?;
         Ok(module_id)
+    }
+
+    fn import_module(&mut self, path: &Path) -> InterpResult<ModuleId> {
+        let module_path = path.path_parts();
+
+        if let Ok(module) = self.ctx.modules.get_module(module_path.clone()) {
+            return Ok(module.id);
+        }
+
+        let full_result = self.resolve_import_source(&module_path);
+        if let Ok(source_id) = full_result {
+            return self.load_module_from_source(module_path, source_id);
+        }
+
+        if module_path.len() > 1 {
+            for prefix_len in (1..module_path.len()).rev() {
+                let prefix: SmallVec<[Spanned<Ustr>; 4]> =
+                    module_path.iter().take(prefix_len).cloned().collect();
+                if self.ctx.modules.get_module(prefix.clone()).is_err() {
+                    if let Ok(source_id) = self.resolve_import_source(&prefix) {
+                        self.load_module_from_source(prefix, source_id)?;
+                    }
+                }
+
+                if let Ok(module) = self.ctx.modules.get_module(module_path.clone()) {
+                    return Ok(module.id);
+                }
+            }
+        }
+
+        Err(InterpError::from(NameError::new(
+            "module not found",
+            module_path.to_spanned_string(),
+        )))
     }
 }
 
@@ -274,6 +301,34 @@ impl<'ctx> Interpreter<'ctx> {
                     Interp::<Value>::eval(block, intrp)
                 })
             }
+            FunctionKind::BuiltinWrapper {
+                target_name,
+                target_params,
+                target_fn,
+                args,
+            } => {
+                let scope = LocalScope::from(
+                    f.params
+                        .iter()
+                        .map(|p| p.name.raw)
+                        .zip(coerced_values.into_iter()),
+                );
+                let target_values = Context::with_scope(self, scope, |intrp| {
+                    intrp.eval_call_args(
+                        target_params,
+                        true,
+                        args.clone(),
+                        call_site,
+                        target_name.raw,
+                    )
+                })?;
+
+                let frame = StackFrame::new(target_name.clone(), call_site);
+                let scope = LocalScope::new();
+                Context::with_fn_call(self, frame, scope, |intrp| {
+                    target_fn(intrp.ctx, target_values).map_err(InterpError::from)
+                })
+            }
         };
 
         match result {
@@ -283,144 +338,195 @@ impl<'ctx> Interpreter<'ctx> {
         }
     }
 
-    fn invoke(
-        &mut self,
-        f: &Function,
-        args: ListNode<Expr>,
-        call_site: SourceSpan,
-    ) -> InterpResult<Value> {
-        use rt::FunctionKind;
-        self.trace_debug(&format!(
-            "invoke function {}({})",
-            f.name.raw,
-            args.pretty_string(&())
-        ));
+    fn eval_arg_for_param(&mut self, param: &rt::Param, arg: &Expr) -> InterpResult<Value> {
+        let ty = param.ty.clone().map_or(rt::Ty::Any, |ty| ty.raw);
 
-        let is_variadic = f.params.last().map_or(false, |p| p.is_variadic());
-        let check_min_args = if is_variadic {
-            f.params.len() - 1
-        } else {
-            f.params.len()
-        };
+        if param.is_optional() && matches!(arg.kind, ExprKind::Empty) {
+            return Ok(Value::Empty);
+        }
 
-        // check that the minimim number of fixed arguments are provided
-        let mut values = vec![];
-        let mut pos = args.start_pos() + 1;
-        for (i, param) in f.params[..check_min_args].iter().enumerate() {
-            let arg = args.get(i).ok_or_else(|| {
-                TypeError::mismatch(
-                    format!(
-                        "function {} expects {} argument(s)",
-                        f.name.raw,
-                        f.params.len(),
-                    ),
-                    pos.as_span().into_spanned(format!("expected argument")),
-                )
-            })?;
+        if ty.is_ref() {
+            let vref = Interp::<ValueRef>::eval(arg, self)?;
+            return Ok(vref.into_value());
+        }
 
-            // Check if splat is used for non-variadic parameter (error)
-            if let ExprKind::Splat(_) = &arg.kind {
-                return Err(TypeError::mismatch(
-                    "regular argument".to_string(),
-                    arg.span()
-                        .into_spanned("splat can only be used for variadic parameters".to_string()),
-                )
-                .into());
+        if ty == rt::Ty::Unit {
+            let val = match &arg.kind {
+                ExprKind::Ident(ident) => {
+                    if let Some(vref) = self
+                        .ctx
+                        .local_scopes()
+                        .iter()
+                        .rev()
+                        .find_map(|scope| scope.get(ident.raw))
+                    {
+                        vref.get()
+                    } else if let Ok(constant) = self
+                        .ctx
+                        .active_module()
+                        .unwrap()
+                        .resolve_constant(ident.as_spanned_ustr())
+                    {
+                        constant.value.get()
+                    } else {
+                        Value::Unit(ident.raw)
+                    }
+                }
+                ExprKind::Path(path) if path.parts.len() == 1 => {
+                    let ident = &path.parts[0];
+                    if let Some(vref) = self
+                        .ctx
+                        .local_scopes()
+                        .iter()
+                        .rev()
+                        .find_map(|scope| scope.get(ident.raw))
+                    {
+                        vref.get()
+                    } else if let Ok(constant) = self
+                        .ctx
+                        .active_module()
+                        .unwrap()
+                        .resolve_constant(ident.as_spanned_ustr())
+                    {
+                        constant.value.get()
+                    } else {
+                        Value::Unit(ident.raw)
+                    }
+                }
+                _ => Interp::<Value>::eval(arg, self)?,
+            };
+
+            if param.is_optional() {
+                match &val {
+                    Value::Empty => return Ok(Value::Empty),
+                    Value::Ref(r) if matches!(&*r.borrow(), Value::Empty) => {
+                        return Ok(Value::Empty);
+                    }
+                    _ => {}
+                }
             }
 
-            let ty = param.ty.clone().map_or(rt::Ty::Any, |ty| ty.raw);
-            if ty.is_ref() {
-                let vref = Interp::<ValueRef>::eval(arg, self)?;
-                values.push(vref.into_value());
-            } else if ty == rt::Ty::Unit {
-                // Allow either bare unit identifiers (e.g. `ms`) or any expression that
-                // evaluates to a unit value (e.g. a variable holding a unit).
-                let val = match &arg.kind {
-                    // For a simple identifier/path, prefer a bound variable/constant if it exists;
-                    // otherwise treat it as a unit literal for backwards compatibility.
-                    ExprKind::Ident(ident) => {
-                        if let Some(vref) = self
-                            .ctx
-                            .local_scopes()
-                            .iter()
-                            .rev()
-                            .find_map(|scope| scope.get(ident.raw))
-                        {
-                            vref.get()
-                        } else if let Ok(constant) = self
-                            .ctx
-                            .active_module()
-                            .unwrap()
-                            .resolve_constant(ident.as_spanned_ustr())
-                        {
-                            constant.value.get()
-                        } else {
-                            Value::Unit(ident.raw)
-                        }
-                    }
-                    ExprKind::Path(path) if path.parts.len() == 1 => {
-                        let ident = &path.parts[0];
-                        if let Some(vref) = self
-                            .ctx
-                            .local_scopes()
-                            .iter()
-                            .rev()
-                            .find_map(|scope| scope.get(ident.raw))
-                        {
-                            vref.get()
-                        } else if let Ok(constant) = self
-                            .ctx
-                            .active_module()
-                            .unwrap()
-                            .resolve_constant(ident.as_spanned_ustr())
-                        {
-                            constant.value.get()
-                        } else {
-                            Value::Unit(ident.raw)
-                        }
-                    }
-                    _ => Interp::<Value>::eval(arg, self)?,
-                };
-
-                // Ensure the argument is a unit value.
-                let unit_value = match val {
+            let unit_value = match val {
+                Value::Unit(u) => Value::Unit(u),
+                Value::Ref(r) => match r.borrow().clone() {
                     Value::Unit(u) => Value::Unit(u),
-                    Value::Ref(r) => match r.borrow().clone() {
-                        Value::Unit(u) => Value::Unit(u),
-                        other => {
-                            let u = rt::CastInto::<ustr::Ustr>::cast(self.ctx, other)?;
-                            Value::Unit(u)
-                        }
-                    },
                     other => {
                         let u = rt::CastInto::<ustr::Ustr>::cast(self.ctx, other)?;
                         Value::Unit(u)
                     }
-                };
+                },
+                other => {
+                    let u = rt::CastInto::<ustr::Ustr>::cast(self.ctx, other)?;
+                    Value::Unit(u)
+                }
+            };
 
-                values.push(unit_value);
-            } else {
-                let val = Interp::<Value>::eval(arg, self)?;
-                values.push(rt::coerce::to_ty(self.ctx, val, ty));
-            }
-            pos = arg.span().end_pos();
+            return Ok(unit_value);
         }
 
-        if is_variadic {
-            // push the remaining arguments into the variadic parameter
-            let mut variadic = vec![];
-            for arg in args.iter().skip(check_min_args) {
-                // Check if this is a splat expression
+        let val = Interp::<Value>::eval(arg, self)?;
+        if param.is_optional() && matches!(val, Value::Empty) {
+            return Ok(Value::Empty);
+        }
+
+        Ok(rt::coerce::to_ty(self.ctx, val, ty))
+    }
+
+    fn eval_call_args(
+        &mut self,
+        params: &[rt::Param],
+        is_native: bool,
+        args: ListNode<Expr>,
+        call_site: SourceSpan,
+        fn_name: Ustr,
+    ) -> InterpResult<Vec<Value>> {
+        let is_variadic = params.last().map_or(false, |p| p.is_variadic());
+        let fixed_param_count = if is_variadic {
+            params.len() - 1
+        } else {
+            params.len()
+        };
+
+        let mut values: Vec<Option<Value>> = vec![None; fixed_param_count];
+        let mut variadic = vec![];
+        let mut saw_named = false;
+        let mut next_positional = 0;
+
+        for arg in args.iter() {
+            let mut handled_named = false;
+            if let ExprKind::Assign(bind, expr) = &arg.kind {
+                if let BindPatKind::Var(ident) = &bind.kind {
+                    saw_named = true;
+                    handled_named = true;
+
+                    if let Some((index, param)) = params
+                        .iter()
+                        .enumerate()
+                        .find(|(_, param)| param.name.raw == ident.raw)
+                    {
+                        if index >= fixed_param_count {
+                            return Err(TypeError::simple(
+                                ident
+                                    .span()
+                                    .into_spanned("variadic parameter cannot be named".to_string()),
+                            )
+                            .into());
+                        }
+                        if values[index].is_some() {
+                            return Err(TypeError::simple(
+                                ident
+                                    .span()
+                                    .into_spanned("duplicate argument".to_string()),
+                            )
+                            .into());
+                        }
+
+                        let value = self.eval_arg_for_param(param, expr)?;
+                        values[index] = Some(value);
+                    } else {
+                        return Err(TypeError::simple(
+                            ident
+                                .span()
+                                .into_spanned(format!("unknown parameter: {}", ident.raw)),
+                        )
+                        .into());
+                    }
+                }
+            }
+
+            if handled_named {
+                continue;
+            }
+
+            if saw_named {
+                return Err(TypeError::simple(
+                    arg.span()
+                        .into_spanned("positional argument after named argument".to_string()),
+                )
+                .into());
+            }
+
+            if next_positional < fixed_param_count {
+                let param = &params[next_positional];
+                if let ExprKind::Splat(_) = &arg.kind {
+                    return Err(TypeError::mismatch(
+                        "regular argument".to_string(),
+                        arg.span()
+                            .into_spanned("splat can only be used for variadic parameters".to_string()),
+                    )
+                    .into());
+                }
+                let value = self.eval_arg_for_param(param, arg)?;
+                values[next_positional] = Some(value);
+                next_positional += 1;
+            } else if is_variadic {
                 if let ExprKind::Splat(inner) = &arg.kind {
-                    // Evaluate the inner expression and expand it
                     let inner_val = inner.eval(self)?;
                     match inner_val {
                         Value::List(list) => {
-                            // Expand the list into individual arguments
                             variadic.extend(list.borrow_slice().iter().cloned());
                         }
                         Value::Tuple(tuple) => {
-                            // Expand the tuple into individual arguments
                             for item in tuple.iter() {
                                 variadic.push((*item.clone()).clone());
                             }
@@ -438,19 +544,213 @@ impl<'ctx> Interpreter<'ctx> {
                 } else {
                     variadic.push(arg.eval(self)?);
                 }
+            } else {
+                return Err(TypeError::mismatch(
+                    format!(
+                        "function {} expects {} argument(s)",
+                        fn_name,
+                        params.len(),
+                    ),
+                    arg.span().into_spanned("unexpected".to_string()),
+                )
+                .into());
+            }
+        }
+
+        if !is_variadic {
+            for arg in args.iter() {
+                if let ExprKind::Splat(_) = &arg.kind {
+                    return Err(TypeError::mismatch(
+                        "regular argument".to_string(),
+                        arg.span()
+                            .into_spanned("splat can only be used for variadic parameters".to_string()),
+                    )
+                    .into());
+                }
+            }
+        }
+
+        let mut coerced_values = Vec::new();
+        for (index, param) in params[..fixed_param_count].iter().enumerate() {
+            let value = if let Some(value) = values[index].take() {
+                value
+            } else if param.is_optional() {
+                Value::Empty
+            } else {
+                return Err(TypeError::simple(
+                    call_site
+                        .into_spanned(format!("missing argument: {}", param.name.raw)),
+                )
+                .into());
+            };
+            coerced_values.push(value);
+        }
+
+        if is_variadic {
+            if is_native {
+                coerced_values.extend(variadic);
+            } else {
+                coerced_values.push(Value::list(variadic));
+            }
+        }
+
+        Ok(coerced_values)
+    }
+
+    fn invoke(
+        &mut self,
+        f: &Function,
+        args: ListNode<Expr>,
+        call_site: SourceSpan,
+    ) -> InterpResult<Value> {
+        use rt::FunctionKind;
+        self.trace_debug(&format!(
+            "invoke function {}({})",
+            f.name.raw,
+            args.pretty_string(&())
+        ));
+
+        let is_variadic = f.params.last().map_or(false, |p| p.is_variadic());
+        let fixed_param_count = if is_variadic {
+            f.params.len() - 1
+        } else {
+            f.params.len()
+        };
+
+        let mut values: Vec<Option<Value>> = vec![None; fixed_param_count];
+        let mut variadic = vec![];
+        let mut saw_named = false;
+        let mut next_positional = 0;
+
+        for arg in args.iter() {
+            let mut handled_named = false;
+            if let ExprKind::Assign(bind, expr) = &arg.kind {
+                if let BindPatKind::Var(ident) = &bind.kind {
+                    saw_named = true;
+                    handled_named = true;
+
+                    if let Some((index, param)) = f
+                        .params
+                        .iter()
+                        .enumerate()
+                        .find(|(_, param)| param.name.raw == ident.raw)
+                    {
+                        if index >= fixed_param_count {
+                            return Err(TypeError::simple(
+                                ident
+                                    .span()
+                                    .into_spanned("variadic parameter cannot be named".to_string()),
+                            )
+                            .into());
+                        }
+                        if values[index].is_some() {
+                            return Err(TypeError::simple(
+                                ident
+                                    .span()
+                                    .into_spanned("duplicate argument".to_string()),
+                            )
+                            .into());
+                        }
+
+                        let value = self.eval_arg_for_param(param, expr)?;
+                        values[index] = Some(value);
+                    } else {
+                        return Err(TypeError::simple(
+                            ident
+                                .span()
+                                .into_spanned(format!("unknown parameter: {}", ident.raw)),
+                        )
+                        .into());
+                    }
+                }
             }
 
-            // For native functions, we need to pass the variadic args directly as a Vec
-            // For source functions, we need to wrap them in a list
-            if matches!(&f.kind, rt::FunctionKind::Native(_)) {
-                // Native functions expect the variadic args to be spread into the values vector
-                values.extend(variadic);
+            if handled_named {
+                continue;
+            }
+
+            if saw_named {
+                return Err(TypeError::simple(
+                    arg.span()
+                        .into_spanned("positional argument after named argument".to_string()),
+                )
+                .into());
+            }
+
+            if next_positional < fixed_param_count {
+                let param = &f.params[next_positional];
+                if let ExprKind::Splat(_) = &arg.kind {
+                    return Err(TypeError::mismatch(
+                        "regular argument".to_string(),
+                        arg.span()
+                            .into_spanned("splat can only be used for variadic parameters".to_string()),
+                    )
+                    .into());
+                }
+                let value = self.eval_arg_for_param(param, arg)?;
+                values[next_positional] = Some(value);
+                next_positional += 1;
+            } else if is_variadic {
+                if let ExprKind::Splat(inner) = &arg.kind {
+                    let inner_val = inner.eval(self)?;
+                    match inner_val {
+                        Value::List(list) => {
+                            variadic.extend(list.borrow_slice().iter().cloned());
+                        }
+                        Value::Tuple(tuple) => {
+                            for item in tuple.iter() {
+                                variadic.push((*item.clone()).clone());
+                            }
+                        }
+                        _ => {
+                            return Err(TypeError::mismatch(
+                                "list or tuple".to_string(),
+                                arg.span().into_spanned(
+                                    "splat can only be applied to lists or tuples".to_string(),
+                                ),
+                            )
+                            .into());
+                        }
+                    }
+                } else {
+                    variadic.push(arg.eval(self)?);
+                }
             } else {
-                // Source functions expect a single list value containing all variadic args
-                values.push(Value::list(variadic));
+                return Err(TypeError::mismatch(
+                    format!(
+                        "function {} expects {} argument(s)",
+                        f.name.raw,
+                        f.params.len(),
+                    ),
+                    arg.span().into_spanned("unexpected".to_string()),
+                )
+                .into());
+            }
+        }
+
+        let mut coerced_values = Vec::new();
+        for (index, param) in f.params[..fixed_param_count].iter().enumerate() {
+            let value = if let Some(value) = values[index].take() {
+                value
+            } else if param.is_optional() {
+                Value::Empty
+            } else {
+                return Err(TypeError::simple(
+                    call_site
+                        .into_spanned(format!("missing argument: {}", param.name.raw)),
+                )
+                .into());
+            };
+            coerced_values.push(value);
+        }
+
+        if is_variadic {
+            if matches!(&f.kind, rt::FunctionKind::Native(_)) {
+                coerced_values.extend(variadic);
+            } else {
+                coerced_values.push(Value::list(variadic));
             }
         } else {
-            // Check if any argument uses splat in non-variadic function
             for arg in args.iter() {
                 if let ExprKind::Splat(_) = &arg.kind {
                     return Err(TypeError::mismatch(
@@ -462,20 +762,6 @@ impl<'ctx> Interpreter<'ctx> {
                     .into());
                 }
             }
-
-            if args.len() > f.params.len() {
-                return Err(TypeError::mismatch(
-                    format!(
-                        "function {} expects {} argument(s)",
-                        f.name.raw,
-                        f.params.len(),
-                    ),
-                    args[values.len()]
-                        .span()
-                        .into_spanned(format!("unexpected")),
-                )
-                .into());
-            }
         }
 
         // invoke the function
@@ -484,16 +770,48 @@ impl<'ctx> Interpreter<'ctx> {
                 let frame = StackFrame::new(f.name, call_site);
                 let scope = LocalScope::new();
                 Context::with_fn_call(self, frame, scope, |intrp| {
-                    builtin(intrp.ctx, values).map_err(InterpError::from)
+                    builtin(intrp.ctx, coerced_values).map_err(InterpError::from)
                 })
             }
             FunctionKind::Source(block) => {
                 let frame = StackFrame::new(f.name, call_site);
-                let scope =
-                    LocalScope::from(f.params.iter().map(|p| p.name.raw).zip(values.into_iter()));
+                let scope = LocalScope::from(
+                    f.params
+                        .iter()
+                        .map(|p| p.name.raw)
+                        .zip(coerced_values.into_iter()),
+                );
 
                 Context::with_fn_call(self, frame, scope, |intrp| {
                     Interp::<Value>::eval(block, intrp)
+                })
+            }
+            FunctionKind::BuiltinWrapper {
+                target_name,
+                target_params,
+                target_fn,
+                args,
+            } => {
+                let scope = LocalScope::from(
+                    f.params
+                        .iter()
+                        .map(|p| p.name.raw)
+                        .zip(coerced_values.into_iter()),
+                );
+                let target_values = Context::with_scope(self, scope, |intrp| {
+                    intrp.eval_call_args(
+                        target_params,
+                        true,
+                        args.clone(),
+                        call_site,
+                        target_name.raw,
+                    )
+                })?;
+
+                let frame = StackFrame::new(target_name.clone(), call_site);
+                let scope = LocalScope::new();
+                Context::with_fn_call(self, frame, scope, |intrp| {
+                    target_fn(intrp.ctx, target_values).map_err(InterpError::from)
                 })
             }
         };
@@ -520,27 +838,35 @@ impl<'ctx> Interpreter<'ctx> {
         } else {
             f.params.len()
         };
+        let required_fixed_args = f.params[..expected_fixed_args]
+            .iter()
+            .take_while(|param| !param.is_optional())
+            .count();
 
-        if !is_variadic && values.len() != f.params.len() {
+        if values.len() < required_fixed_args {
             return Err(InterpError::TypeError(TypeError {
                 expected: Some(format!(
-                    "function {} expects {} argument(s)",
-                    f.name.raw,
-                    f.params.len(),
+                    "function {} expects at least {} argument(s)",
+                    f.name.raw, required_fixed_args,
                 )),
                 found: call_site.into_spanned(format!("found {}", values.len())),
                 context: None,
             }));
         }
-        if is_variadic && values.len() < expected_fixed_args {
+        if !is_variadic && values.len() > expected_fixed_args {
             return Err(InterpError::TypeError(TypeError {
                 expected: Some(format!(
-                    "function {} expects at least {} argument(s)",
-                    f.name.raw, expected_fixed_args,
+                    "function {} expects {} argument(s)",
+                    f.name.raw,
+                    expected_fixed_args,
                 )),
                 found: call_site.into_spanned(format!("found {}", values.len())),
                 context: None,
             }));
+        }
+
+        if values.len() < expected_fixed_args {
+            values.extend(std::iter::repeat(Value::Empty).take(expected_fixed_args - values.len()));
         }
 
         let mut coerced_values = Vec::new();
@@ -555,13 +881,12 @@ impl<'ctx> Interpreter<'ctx> {
                 break;
             }
 
-            let mut v = values.get(i).cloned().ok_or_else(|| {
-                InterpError::TypeError(TypeError {
-                    expected: Some(format!("function {} expects argument", f.name.raw)),
-                    found: call_site.into_spanned("missing argument".to_string()),
-                    context: None,
-                })
-            })?;
+            let mut v = values.get(i).cloned().unwrap_or(Value::Empty);
+
+            if param.is_optional() && matches!(v, Value::Empty) {
+                coerced_values.push(Value::Empty);
+                continue;
+            }
 
             let ty = param.ty.clone().map_or(rt::Ty::Any, |ty| ty.raw);
             if ty.is_ref() {
@@ -595,6 +920,34 @@ impl<'ctx> Interpreter<'ctx> {
 
                 Context::with_fn_call(self, frame, scope, |intrp| {
                     Interp::<Value>::eval(body, intrp)
+                })
+            }
+            FunctionKind::BuiltinWrapper {
+                target_name,
+                target_params,
+                target_fn,
+                args,
+            } => {
+                let scope = LocalScope::from(
+                    f.params
+                        .iter()
+                        .map(|p| p.name.raw)
+                        .zip(coerced_values.into_iter()),
+                );
+                let target_values = Context::with_scope(self, scope, |intrp| {
+                    intrp.eval_call_args(
+                        target_params,
+                        true,
+                        args.clone(),
+                        call_site,
+                        target_name.raw,
+                    )
+                })?;
+
+                let frame = StackFrame::new(target_name.clone(), call_site);
+                let scope = LocalScope::new();
+                Context::with_fn_call(self, frame, scope, |intrp| {
+                    target_fn(intrp.ctx, target_values).map_err(InterpError::from)
                 })
             }
         };
@@ -704,7 +1057,10 @@ impl<'ctx> Interp<'ctx, Option<Value>> for Item {
     fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<Option<Value>> {
         match &self.kind {
             ItemKind::Import(path) => {
-                intrp.import_module(path)?;
+                let module_id = intrp.import_module(path)?;
+                intrp
+                    .active_module()
+                    .register_module_alias(path.name_part(), module_id)?;
                 Ok(None)
             }
             ItemKind::Directive(d) => d.eval(intrp).map(|_| None),
@@ -713,6 +1069,41 @@ impl<'ctx> Interp<'ctx, Option<Value>> for Item {
             ItemKind::OpDecl(decl) => decl.eval(intrp).map(|_| None),
             ItemKind::ConstDecl(decl) => decl.eval(intrp).map(|_| None),
             ItemKind::FnDecl(decl) => Interp::<()>::eval(decl, intrp).map(|_| None),
+            ItemKind::ModuleDecl(decl) => {
+                let parent_id = intrp.ctx.active_module().unwrap().id;
+                let mut module_path = intrp.ctx.modules.module_path(parent_id).clone();
+                module_path.push(decl.name.as_spanned_ustr());
+
+                let mut opened = intrp.ctx.active_module().unwrap().opened.clone();
+                if !opened.contains(&parent_id) {
+                    opened.push(parent_id);
+                }
+
+                let parent_graph = intrp.ctx.active_module().unwrap().conversion_graph.clone();
+                let module_id = {
+                    let module = intrp
+                        .ctx
+                        .modules
+                        .new_module(module_path)
+                        .map_err(InterpError::from)?;
+                    module.opened = opened;
+                    module.conversion_graph = parent_graph;
+                    module.id
+                };
+
+                let source_id = intrp.current_source;
+                Context::with_active_module(intrp.ctx, module_id, |ctx| {
+                    let mut nested = Interpreter::new(ctx);
+                    if let Some(source_id) = source_id {
+                        nested = nested.with_source(source_id);
+                    }
+                    for item in &decl.items {
+                        item.eval(&mut nested)?;
+                    }
+                    Ok::<(), InterpError>(())
+                })?;
+                Ok(None)
+            }
             ItemKind::Expr(expr) => {
                 let v = Interp::<Value>::eval(expr, intrp)?;
                 intrp.ctx.set_last_value(v.clone());
@@ -743,6 +1134,25 @@ impl<'ctx> Interp<'ctx, ()> for Directive {
                         );
                     }
                     intrp.ctx.config.float_precision = prec
+                }
+                DirectiveKind::SignificantFigures(places) => {
+                    if let Some(places) = places {
+                        let places = *places;
+                        if places == 0 || places > MAX_SIGNIFICANT_FIGURES {
+                            let msg = format!(
+                                "significant_figures must be between 1 and {}, got {}",
+                                MAX_SIGNIFICANT_FIGURES, places
+                            );
+                            return Err(
+                                Exception::new("ValueError", msg)
+                                    .with_primary_span(self.span())
+                                    .into(),
+                            );
+                        }
+                        intrp.ctx.config.decimal_places = Some(places);
+                    } else {
+                        intrp.ctx.config.decimal_places = None;
+                    }
                 }
                 DirectiveKind::DefaultFormatter(name) => {
                     intrp.ctx.set_default_formatter(name.raw);
@@ -967,6 +1377,8 @@ impl<'ctx> Interp<'ctx, Function> for FnDecl {
     fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<Function> {
         no_trace! {self, intrp, "Interp::<Function>::FnDecl", {
             // validate the parameters
+            let mut seen_optional = false;
+            let mut seen_variadic = false;
             for (i, param) in self.params.iter().enumerate() {
                 if param.is_variadic && i != self.params.len() - 1 {
                     return Err(TypeError::simple(
@@ -976,11 +1388,96 @@ impl<'ctx> Interp<'ctx, Function> for FnDecl {
                     )
                     .into());
                 }
+                if param.is_variadic {
+                    seen_variadic = true;
+                }
+                if param.is_optional {
+                    if param.is_variadic {
+                        return Err(TypeError::simple(
+                            param
+                                .span()
+                                .into_spanned("variadic parameter cannot be optional".to_string()),
+                        )
+                        .into());
+                    }
+                    if seen_variadic {
+                        return Err(TypeError::simple(
+                            param
+                                .span()
+                                .into_spanned("optional parameter cannot follow variadic parameter".to_string()),
+                        )
+                        .into());
+                    }
+                    seen_optional = true;
+                } else if seen_optional {
+                    return Err(TypeError::simple(
+                        param
+                            .span()
+                            .into_spanned("required parameter cannot follow optional parameter".to_string()),
+                    )
+                    .into());
+                }
             }
 
             let name = self.name.as_spanned_ustr();
             let params = self.params.eval(intrp)?;
-            let kind = rt::FunctionKind::Source(self.body.clone());
+            let kind = if self.is_builtin_wrapper {
+                if self.body.items.len() != 1 {
+                    return Err(TypeError::simple(
+                        self.body
+                            .span()
+                            .into_spanned("builtin wrappers must contain one call expression".to_string()),
+                    )
+                    .into());
+                }
+
+                let stmt = &self.body.items[0];
+                let call_expr = match &stmt.kind {
+                    StmtKind::Expr(expr) => expr.as_ref(),
+                    StmtKind::Return(expr) => expr.as_ref(),
+                    _ => {
+                        return Err(TypeError::simple(
+                            stmt.span()
+                                .into_spanned("builtin wrappers must call a builtin function".to_string()),
+                        )
+                        .into())
+                    }
+                };
+
+                let (target_path, target_args) = match &call_expr.kind {
+                    ExprKind::FnCall(path, args) => (path, args),
+                    _ => {
+                        return Err(TypeError::simple(
+                            call_expr
+                                .span()
+                                .into_spanned("builtin wrappers must call a builtin function".to_string()),
+                        )
+                        .into())
+                    }
+                };
+
+                let target = Interp::<Function>::eval(target_path, intrp)?;
+                let (target_name, target_params, target_fn) = match target.kind {
+                    rt::FunctionKind::Native(func) => (target.name, target.params, func),
+                    _ => {
+                        return Err(TypeError::simple(
+                            target_path
+                                .span()
+                                .into_spanned("builtin wrappers must target a builtin function".to_string()),
+                        )
+                        .into())
+                    }
+                };
+
+                rt::FunctionKind::BuiltinWrapper {
+                    target_name,
+                    target_params,
+                    target_fn,
+                    args: target_args.clone(),
+                }
+            } else {
+                rt::FunctionKind::Source(self.body.clone())
+            };
 
             Ok(Function::new(name, params, kind))
         }}
@@ -1010,8 +1507,12 @@ impl<'ctx> Interp<'ctx, rt::Param> for Param {
                     // Check if this is a simple identifier that might be a unit constraint (e.g., [rad])
                     let ty = if let DimExprKind::Ident(ident) = &dim_node.kind {
                             // Try to resolve as a unit suffix first
-                        let module = intrp.ctx.active_module_mut().unwrap();
-                        if let Ok(unit) = module.resolve_unit_suffix(ident.as_spanned_ustr()) {
+                        let module_id = intrp.ctx.active_module().unwrap().id;
+                        if let Ok(unit) = intrp
+                            .ctx
+                            .modules
+                            .resolve_unit_suffix_in(module_id, ident.as_spanned_ustr())
+                        {
                             // This is a unit constraint - create a Dim with unit info
                             rt::Ty::Dim(rt::Dim::simple(unit.dim_expr.clone(), ident.raw, unit.conversion.clone()))
                         } else {
@@ -1030,7 +1531,11 @@ impl<'ctx> Interp<'ctx, rt::Param> for Param {
                 },
                 None => None,
             };
-            Ok(rt::Param::new(self.name.as_spanned_ustr(), ty))
+            if self.is_optional {
+                Ok(rt::Param::optional(self.name.as_spanned_ustr(), ty))
+            } else {
+                Ok(rt::Param::new(self.name.as_spanned_ustr(), ty))
+            }
         }}
     }
 }
@@ -1063,9 +1568,11 @@ impl<'ctx> Interp<'ctx, rt::DimExpr> for DimExpr {
                 DimExpr::Neg(expr.into())
             }
             DimExprKind::Ident(name) => {
-                let module = intrp.ctx.active_module_mut().unwrap();
-                let dim = module
-                    .resolve_dimension(name.as_spanned_ustr())
+                let module_id = intrp.ctx.active_module().unwrap().id;
+                let dim = intrp
+                    .ctx
+                    .modules
+                    .resolve_dimension_in(module_id, name.as_spanned_ustr())
                     .map_err(InterpError::from)?;
 
                 dim.expr.clone()
@@ -1076,9 +1583,11 @@ impl<'ctx> Interp<'ctx, rt::DimExpr> for DimExpr {
             }
             DimExprKind::Unit(suffix) => {
                 // For unit constraints like [rad], we look up the unit and return its dimension
-                let module = intrp.ctx.active_module_mut().unwrap();
-                let unit = module
-                    .resolve_unit_suffix(suffix.as_spanned_ustr())
+                let module_id = intrp.ctx.active_module().unwrap().id;
+                let unit = intrp
+                    .ctx
+                    .modules
+                    .resolve_unit_suffix_in(module_id, suffix.as_spanned_ustr())
                     .map_err(InterpError::from)?;
 
                 unit.dim_expr.clone()
@@ -1266,11 +1775,14 @@ impl<'ctx> Interp<'ctx, LRValue> for Expr {
                     match value {
                         Value::Quantity(q) => {
                             let (name, conv, expr) = {
+                                let module_id = intrp.ctx.active_module().unwrap().id;
                                 let unit = intrp
                                     .ctx
-                                    .active_module_mut()
-                                    .unwrap()
-                                    .resolve_unit_suffix(unit.span().into_spanned(unit.name))
+                                    .modules
+                                    .resolve_unit_suffix_in(
+                                        module_id,
+                                        unit.span().into_spanned(unit.name),
+                                    )
                                     .map_err(InterpError::from)?;
 
                                 (unit.name.raw, unit.conversion.clone(), unit.dim_expr.clone())
@@ -1365,11 +1877,11 @@ impl<'ctx> Interp<'ctx, LRValue> for Expr {
                 ExprKind::String(s) => Ok(LRValue::R(Value::String(s.clone()))),
                 ExprKind::Boolean(b) => Ok(LRValue::R(Value::Boolean(*b))),
                 ExprKind::Unit(unit) => {
+                    let module_id = intrp.ctx.active_module().unwrap().id;
                     let unit = intrp
                         .ctx
-                        .active_module()
-                        .unwrap()
-                        .resolve_unit_suffix(unit.clone().into_raw_spanned())?;
+                        .modules
+                        .resolve_unit_suffix_in(module_id, unit.clone().into_raw_spanned())?;
                     Ok(LRValue::R(Value::Unit(unit.name.into())))
                 }
                 ExprKind::Slice(container, start, stop) => {
@@ -1564,9 +2076,12 @@ impl<'ctx> Interp<'ctx, rt::Ty> for Ty {
 impl<'ctx> Interp<'ctx, Function> for Operator {
     fn eval(&self, intrp: &mut Interpreter<'ctx>) -> InterpResult<Function> {
         trace! {self, intrp, "Interp::<Function>::Operator", {
-            let module = intrp.ctx.active_module_mut().unwrap();
-
-            let op = module.resolve_operator(self.kind, self.as_spanned_ustr()).map_err(InterpError::from)?;
+            let module_id = intrp.ctx.active_module().unwrap().id;
+            let op = intrp
+                .ctx
+                .modules
+                .resolve_operator_in(module_id, self.kind, self.as_spanned_ustr())
+                .map_err(InterpError::from)?;
             match op.func.clone() {
                 Left(path) => path.eval(intrp),
                 Right(body) => todo!(),

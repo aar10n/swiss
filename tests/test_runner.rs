@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{ArgAction, Parser};
 use std::env;
 use std::error::Error;
 use std::fs;
@@ -38,6 +38,7 @@ pub struct TestFile {
     pub setup_code: Option<String>,
     pub test_cases: Vec<TestCase>,
     pub workdir: Option<String>,
+    pub swisspath: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -49,6 +50,7 @@ pub struct TestRunner {
 struct FailureRecord {
     file_idx: usize,
     name: String,
+    expect_type: ExpectType,
     expected: String,
     actual: String,
 }
@@ -61,8 +63,8 @@ pub struct CliArgs {
     pub filters: Vec<String>,
 
     /// Verbose output (print per-test-case results and detailed summary)
-    #[arg(short = 'v', long = "verbose")]
-    pub verbose: bool,
+    #[arg(short = 'v', long = "verbose", action = ArgAction::Count)]
+    pub verbose: u8,
 
     /// Test directory containing .test files
     #[arg(short = 'd', long = "test-dir", default_value = "./tests/cases/")]
@@ -90,7 +92,7 @@ impl TestRunner {
 
     pub fn run_all_tests(
         &self,
-        verbose: bool,
+        verbosity: u8,
         filters: &[String],
         fail_fast: bool,
         jobs: usize,
@@ -114,6 +116,7 @@ impl TestRunner {
             setup: Option<String>,
             swiss_bin: PathBuf,
             workdir: PathBuf,
+            swisspath: Option<String>,
         }
 
         let mut tasks: Vec<Task> = Vec::new();
@@ -148,7 +151,9 @@ impl TestRunner {
             let file_idx = per_file_names.len();
             per_file_counts.push(parsed.test_cases.len());
             per_file_names.push(path.clone());
-            let include = resolve_include_path(&runner_cwd, parsed.include_file.as_deref());
+            let include = resolve_include_path(&runner_cwd, parsed.include_file.as_deref())?;
+            let swisspath = resolve_swisspath(&runner_cwd, &file_dir, parsed.swisspath.as_deref())
+                .or_else(|| default_swisspath(&runner_cwd, include.as_deref()));
 
             for (case_idx, test_case) in parsed.test_cases.into_iter().enumerate() {
                 let workdir = resolve_workdir(
@@ -165,6 +170,7 @@ impl TestRunner {
                     setup: parsed.setup_code.clone(),
                     swiss_bin: swiss_bin.clone(),
                     workdir,
+                    swisspath: swisspath.clone(),
                 });
             }
         }
@@ -179,7 +185,7 @@ impl TestRunner {
         // Task queue and result channel
         let (task_tx, task_rx) = mpsc::channel::<Task>();
         let task_rx = Arc::new(Mutex::new(task_rx));
-        let (res_tx, res_rx) = mpsc::channel::<(usize, usize, String, CaseResult)>();
+        let (res_tx, res_rx) = mpsc::channel::<(usize, usize, String, ExpectType, CaseResult)>();
 
         // Spawn workers
         let worker_count = if jobs == 0 { 1 } else { jobs };
@@ -188,7 +194,7 @@ impl TestRunner {
             let runner = self.clone();
             let stop = Arc::clone(&stop_flag);
             let res_tx = res_tx.clone();
-            let verbose_worker = verbose;
+            let verbose_worker = verbosity;
             thread::spawn(move || {
                 loop {
                     if stop.load(Ordering::SeqCst) {
@@ -204,7 +210,7 @@ impl TestRunner {
                     if stop.load(Ordering::SeqCst) {
                         break;
                     }
-                    if verbose_worker {
+                    if verbose_worker > 0 {
                         print_with_color(
                             use_color,
                             Color::Cyan,
@@ -217,6 +223,8 @@ impl TestRunner {
                         &task.setup,
                         &task.swiss_bin,
                         &task.workdir,
+                        &task.swisspath,
+                        verbose_worker,
                     ) {
                         Ok(outcome) => outcome,
                         Err(err) => CaseResult::Failed {
@@ -237,8 +245,13 @@ impl TestRunner {
                         color,
                         &format!("  {} {}", status, task.test_case.name),
                     );
-                    let _ =
-                        res_tx.send((task.file_idx, task.case_idx, task.test_case.name, outcome));
+                    let _ = res_tx.send((
+                        task.file_idx,
+                        task.case_idx,
+                        task.test_case.name,
+                        task.test_case.expect_type.clone(),
+                        outcome,
+                    ));
                 }
             });
         }
@@ -261,7 +274,7 @@ impl TestRunner {
             .map(|&count| vec![None; count])
             .collect();
 
-        while let Ok((file_idx, case_idx, name, outcome)) = res_rx.recv() {
+        while let Ok((file_idx, case_idx, name, expect_type, outcome)) = res_rx.recv() {
             if let Some(slot) = results
                 .get_mut(file_idx)
                 .and_then(|cases| cases.get_mut(case_idx))
@@ -277,6 +290,7 @@ impl TestRunner {
                     failed_tests.push(FailureRecord {
                         file_idx,
                         name: name.clone(),
+                        expect_type,
                         expected,
                         actual,
                     });
@@ -289,7 +303,7 @@ impl TestRunner {
         }
 
         let failed_count = failed_tests.len();
-        if verbose {
+        if verbosity > 0 {
             print_plain("\nTest Results:");
             print_plain(&format!("  Total: {}", total_tests));
             print_with_color(
@@ -335,7 +349,9 @@ impl TestRunner {
             .parent()
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from("."));
-        let include = resolve_include_path(&runner_cwd, test_file.include_file.as_deref());
+        let include = resolve_include_path(&runner_cwd, test_file.include_file.as_deref())?;
+        let swisspath = resolve_swisspath(&runner_cwd, &file_dir, test_file.swisspath.as_deref())
+            .or_else(|| default_swisspath(&runner_cwd, include.as_deref()));
 
         for test_case in test_file.test_cases {
             let workdir = resolve_workdir(
@@ -351,6 +367,8 @@ impl TestRunner {
                     &test_file.setup_code,
                     &swiss_bin,
                     &workdir,
+                    &swisspath,
+                    0,
                 )?,
                 CaseResult::Passed
             );
@@ -364,6 +382,7 @@ impl TestRunner {
         let mut include_file = None;
         let mut setup_code = None;
         let mut suite_workdir = None;
+        let mut suite_swisspath = None;
         let mut test_cases = Vec::new();
         let mut lines = content.lines().peekable();
         let mut seen_test = false;
@@ -383,14 +402,45 @@ impl TestRunner {
                     return Err("WORKDIR must appear before any TEST cases".into());
                 }
                 suite_workdir = Some(line[8..].trim().to_string());
+            } else if line.starts_with("SWISSPATH:") {
+                if seen_test {
+                    return Err("SWISSPATH must appear before any TEST cases".into());
+                }
+                suite_swisspath = Some(line[10..].trim().to_string());
             } else if line.starts_with("SETUP:") {
                 // Parse multi-line setup code
                 let first_line = line[6..].trim();
                 let mut setup_lines = Vec::new();
 
                 if !first_line.is_empty() {
-                    // Single-line setup
-                    setup_lines.push(first_line.to_string());
+                    if first_line == "{" {
+                        // Brace-delimited block - collect until matching closing brace
+                        // The braces are just delimiters and not included in the actual setup
+                        let mut brace_depth = 1;
+                        let mut found_closing_brace = false;
+                        while let Some(next_line) = lines.next() {
+                            let trimmed = next_line.trim();
+
+                            let opens = trimmed.matches('{').count();
+                            let closes = trimmed.matches('}').count();
+                            let delta = opens as i32 - closes as i32;
+
+                            if brace_depth + delta == 0 && trimmed == "}" {
+                                found_closing_brace = true;
+                                break;
+                            }
+
+                            brace_depth += delta;
+                            setup_lines.push(trimmed.to_string());
+                        }
+
+                        if !found_closing_brace {
+                            eprintln!("Warning: Unclosed brace in SETUP block");
+                        }
+                    } else {
+                        // Single-line setup
+                        setup_lines.push(first_line.to_string());
+                    }
                 } else {
                     // Multi-line setup - collect until we hit TEST:, INCLUDE:, empty line after content, or comment
                     let mut has_content = false;
@@ -519,6 +569,7 @@ impl TestRunner {
             setup_code,
             test_cases,
             workdir: suite_workdir,
+            swisspath: suite_swisspath,
         })
     }
 
@@ -529,32 +580,19 @@ impl TestRunner {
         setup_code: &Option<String>,
         swiss_bin: &Path,
         workdir: &Path,
+        swisspath: &Option<String>,
+        verbosity: u8,
     ) -> Result<CaseResult, Box<dyn std::error::Error>> {
         let mut args: Vec<String> = vec![];
         if let Some(include) = include_file {
-            args.push("-f".to_string());
+            args.push("-p".to_string());
             args.push(include.clone());
         }
 
         // Build the full input: setup code + test input
         let mut full_input = String::new();
         if let Some(setup) = setup_code {
-            // Add semicolons to setup code lines to ensure they're treated as separate statements
-            for line in setup.lines() {
-                let trimmed = line.trim();
-                if !trimmed.is_empty() && !trimmed.starts_with(';') {
-                    full_input.push_str(line);
-                    // Add semicolon if the line doesn't already end with one
-                    if !trimmed.ends_with(';') {
-                        full_input.push(';');
-                    }
-                    full_input.push('\n');
-                } else {
-                    full_input.push_str(line);
-                    full_input.push('\n');
-                }
-            }
-            // Ensure there's a newline after setup code
+            full_input.push_str(setup);
             if !full_input.ends_with('\n') {
                 full_input.push('\n');
             }
@@ -565,6 +603,19 @@ impl TestRunner {
         let mut cmd = Command::new(swiss_bin);
         cmd.args(&args);
         cmd.current_dir(workdir);
+        if let Some(swisspath) = swisspath {
+            cmd.env("SWISSPATH", swisspath);
+        }
+        if verbosity > 1 {
+            print_plain(&format!(
+                "    Debug: swiss invocation='{} {}' cwd='{}'",
+                swiss_bin.display(),
+                args.join(" "),
+                workdir.display()
+            ));
+            print_plain("    Debug: swiss stdin:");
+            print_plain(&full_input.escape_debug().to_string());
+        }
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
@@ -590,6 +641,7 @@ impl TestRunner {
         test_case: &TestCase,
         output: std::process::Output,
     ) -> Result<CaseResult, Box<dyn std::error::Error>> {
+        let stderr_text = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let result = match test_case.expect_type {
             ExpectType::Output => {
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -609,22 +661,39 @@ impl TestRunner {
                     } else {
                         println!("    Expected: '{}'", expected_clean);
                         println!("    Actual:   '{}'", actual_clean);
+                        if !stderr_text.is_empty() {
+                            println!("    Stderr:   '{}'", stderr_text);
+                        }
                         CaseResult::Failed {
                             expected: expected_clean,
-                            actual: actual_clean,
+                            actual: if stderr_text.is_empty() {
+                                actual_clean
+                            } else {
+                                format!("{} (stderr: {})", actual_clean, stderr_text)
+                            },
                         }
                     }
                 } else {
                     println!("    No RESULT found in output");
+                    if !stderr_text.is_empty() {
+                        println!("    Stderr: '{}'", stderr_text);
+                    }
                     CaseResult::Failed {
                         expected: strip_ansi_codes(&test_case.expected).trim().to_string(),
-                        actual: String::from_utf8_lossy(&output.stdout).trim().to_string(),
+                        actual: if stderr_text.is_empty() {
+                            String::from_utf8_lossy(&output.stdout).trim().to_string()
+                        } else {
+                            format!(
+                                "{}\nStderr: {}",
+                                String::from_utf8_lossy(&output.stdout).trim(),
+                                stderr_text
+                            )
+                        },
                     }
                 }
             }
             ExpectType::Error => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let actual_clean = strip_ansi_codes(&stderr).trim().to_string();
+                let actual_clean = strip_ansi_codes(&stderr_text).trim().to_string();
                 let expected_clean = strip_ansi_codes(&test_case.expected).trim().to_string();
 
                 if actual_clean.contains(&expected_clean) {
@@ -716,6 +785,27 @@ fn summarize_value(value: &str) -> String {
     }
 }
 
+fn split_actual_for_summary(actual: &str) -> (String, Option<String>) {
+    let trimmed = actual.trim();
+    if let Some(rest) = trimmed.strip_prefix("Stderr: ") {
+        return (String::new(), Some(rest.to_string()));
+    }
+    if let Some(idx) = trimmed.find("\nStderr: ") {
+        let (value, rest) = trimmed.split_at(idx);
+        let error = rest.trim_start_matches("\nStderr: ").to_string();
+        return (value.trim().to_string(), Some(error));
+    }
+    if let Some(idx) = trimmed.find(" (stderr: ") {
+        let (value, rest) = trimmed.split_at(idx);
+        let error = rest
+            .trim_start_matches(" (stderr: ")
+            .trim_end_matches(')')
+            .to_string();
+        return (value.trim().to_string(), Some(error));
+    }
+    (trimmed.to_string(), None)
+}
+
 fn format_failure_summary(
     failures: &[FailureRecord],
     file_names: &[PathBuf],
@@ -736,17 +826,31 @@ fn format_failure_summary(
         );
         let expected_label = colorize(use_color, "\x1b[33m", "Expected:");
         let actual_label = colorize(use_color, "\x1b[33m", "Actual:");
+        let error_label = colorize(use_color, "\x1b[33m", "Error:");
         let expected = summarize_value(&failure.expected);
-        let actual = summarize_value(&failure.actual);
+        let (mut actual_value, mut error_value) = split_actual_for_summary(&failure.actual);
+        if matches!(failure.expect_type, ExpectType::Error) && error_value.is_none() {
+            error_value = Some(actual_value);
+            actual_value = String::new();
+        }
 
-        blocks.push(format!(
-            "{header}\n{expected_label} '{expected}'\n{actual_label}   '{actual}'",
+        let mut block = format!(
+            "{header}\n{expected_label} '{expected}'",
             header = header,
             expected_label = expected_label,
-            actual_label = actual_label,
             expected = expected,
-            actual = actual,
-        ));
+        );
+        if !actual_value.is_empty() {
+            let actual = summarize_value(&actual_value);
+            block.push_str(&format!("\n{actual_label}   '{actual}'",));
+        }
+        if let Some(error) = error_value {
+            let first_line = error.lines().next().unwrap_or("").trim();
+            if !first_line.is_empty() {
+                block.push_str(&format!("\n{error_label} {first_line}",));
+            }
+        }
+        blocks.push(block);
     }
 
     blocks.join("\n\n")
@@ -773,16 +877,58 @@ fn resolve_workdir(
     }
 }
 
-fn resolve_include_path(runner_cwd: &Path, include: Option<&str>) -> Option<String> {
-    include.map(|path| {
-        let include_path = PathBuf::from(path);
-        let resolved = if include_path.is_absolute() {
-            include_path
-        } else {
-            runner_cwd.join(include_path)
-        };
-        resolved.to_string_lossy().to_string()
+fn resolve_swisspath(
+    runner_cwd: &Path,
+    file_dir: &Path,
+    suite_swisspath: Option<&str>,
+) -> Option<String> {
+    suite_swisspath.map(|raw| {
+        raw.replace("${FILE_DIR}", &file_dir.to_string_lossy())
+            .split(':')
+            .filter(|part| !part.trim().is_empty())
+            .map(|part| {
+                let path = PathBuf::from(part.trim());
+                let resolved = if path.is_absolute() {
+                    path
+                } else {
+                    runner_cwd.join(path)
+                };
+                resolved.to_string_lossy().to_string()
+            })
+            .collect::<Vec<_>>()
+            .join(":")
     })
+}
+
+fn default_swisspath(runner_cwd: &Path, include: Option<&str>) -> Option<String> {
+    let base = include
+        .and_then(|path| Path::new(path).parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| runner_cwd.to_path_buf());
+    Some(base.to_string_lossy().to_string())
+}
+
+fn resolve_include_path(
+    runner_cwd: &Path,
+    include: Option<&str>,
+) -> Result<Option<String>, Box<dyn Error>> {
+    include
+        .map(|path| {
+            let include_path = PathBuf::from(path);
+            let resolved = if include_path.is_absolute() {
+                include_path
+            } else {
+                runner_cwd.join(include_path)
+            };
+            let canonical = resolved.canonicalize().map_err(|err| {
+                format!(
+                    "failed to resolve INCLUDE path '{}': {}",
+                    resolved.display(),
+                    err
+                )
+            })?;
+            Ok(canonical.to_string_lossy().to_string())
+        })
+        .transpose()
 }
 
 fn resolve_swiss_bin() -> Result<PathBuf, Box<dyn Error>> {
@@ -845,7 +991,7 @@ mod tests {
         // Create test directory if it doesn't exist
         fs::create_dir_all("tests/cases").unwrap();
 
-        match test_runner.run_all_tests(true, &[], false, 1, false) {
+        match test_runner.run_all_tests(0, &[], false, 1, false) {
             Ok(()) => println!("All tests passed!"),
             Err(e) => panic!("Tests failed: {}", e),
         }
