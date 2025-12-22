@@ -419,37 +419,46 @@ impl PrettyPrint<Context> for Expr {
                 write!(out, " ")?;
                 unit.pretty_print(out, ctx, 0)
             }
-            ExprKind::IfElse(cond, then, else_) => {
-                writeln!(out, "{KEYWORD}If{RESET} ")?;
-                write!(out, "{tab}")?;
-                cond.pretty_print(out, ctx, level + 1)?;
-                writeln!(out)?;
+            ExprKind::If(if_expr) => {
+                for (i, branch) in if_expr.branches.iter().enumerate() {
+                    if i == 0 {
+                        writeln!(out, "{KEYWORD}If{RESET} ")?;
+                    } else {
+                        writeln!(out, "{tab}{KEYWORD}ElseIf{RESET} ")?;
+                    }
+                    write!(out, "{tab}")?;
+                    branch.cond.pretty_print(out, ctx, level + 1)?;
+                    writeln!(out)?;
 
-                if then.len() == 1 {
-                    writeln!(
-                        out,
-                        "{tab}{KEYWORD}Then{RESET} {}",
-                        then[0].pretty_string(ctx)
-                    )?;
-                } else {
-                    writeln!(out, "{tab}{KEYWORD}Then{RESET}")?;
-                    for item in then.iter() {
-                        item.pretty_print(out, ctx, level + 1)?;
-                        writeln!(out)?;
+                    if branch.body.len() == 1 {
+                        writeln!(
+                            out,
+                            "{tab}{KEYWORD}Then{RESET} {}",
+                            branch.body[0].pretty_string(ctx)
+                        )?;
+                    } else {
+                        writeln!(out, "{tab}{KEYWORD}Then{RESET}")?;
+                        for item in branch.body.iter() {
+                            item.pretty_print(out, ctx, level + 1)?;
+                            writeln!(out)?;
+                        }
                     }
                 }
-                if else_.len() == 1 {
-                    write!(
-                        out,
-                        "{tab}{KEYWORD}Else{RESET} {}",
-                        else_[0].pretty_string(ctx)
-                    )?;
-                } else {
-                    writeln!(out, "{tab}{KEYWORD}Else{RESET}")?;
-                    for (i, item) in else_.iter().enumerate() {
-                        item.pretty_print(out, ctx, level + 1)?;
-                        if i < else_.len() - 1 {
-                            writeln!(out)?;
+
+                if let Some(else_) = &if_expr.else_branch {
+                    if else_.len() == 1 {
+                        write!(
+                            out,
+                            "{tab}{KEYWORD}Else{RESET} {}",
+                            else_[0].pretty_string(ctx)
+                        )?;
+                    } else {
+                        writeln!(out, "{tab}{KEYWORD}Else{RESET}")?;
+                        for (i, item) in else_.iter().enumerate() {
+                            item.pretty_print(out, ctx, level + 1)?;
+                            if i < else_.len() - 1 {
+                                writeln!(out)?;
+                            }
                         }
                     }
                 }

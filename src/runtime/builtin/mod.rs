@@ -204,7 +204,8 @@ macro_rules! builtin_interface {
             Function::new(
                 Spanned::new(stringify!($fn_name).into(), SourceSpan::default()),
                 vec![$(Param::from((format!("_{}", stringify!($param_ty)).into(), Some(builtin_ty_v2!($param_ty))))),*],
-                FunctionKind::Native(|_, _| unreachable!("interface function should not be called"))
+                FunctionKind::Native(|_, _| unreachable!("interface function should not be called")),
+                None
             ),
         ] $($rest)*)
     };
@@ -214,7 +215,8 @@ macro_rules! builtin_interface {
             Function::new(
                 Spanned::new(stringify!($fn_name).into(), SourceSpan::default()),
                 vec![$(Param::from((format!("_{}", stringify!($param_ty)).into(), Some(builtin_ty_v2!($param_ty))))),*],
-                FunctionKind::Native(|_, _| unreachable!("interface function should not be called"))
+                FunctionKind::Native(|_, _| unreachable!("interface function should not be called")),
+                None
             ),
         ] $($rest)*)
     };
@@ -224,7 +226,8 @@ macro_rules! builtin_interface {
             Function::new(
                 Spanned::new(stringify!($fn_name).into(), SourceSpan::default()),
                 vec![$(Param::from((format!("_{}", stringify!($param_ty)).into(), Some(builtin_ty_v2!($param_ty))))),*],
-                FunctionKind::Native(|_, _| unreachable!("interface function should not be called"))
+                FunctionKind::Native(|_, _| unreachable!("interface function should not be called")),
+                None
             ),
         ] $($rest)*)
     };
@@ -234,7 +237,8 @@ macro_rules! builtin_interface {
             Function::new(
                 Spanned::new(stringify!($fn_name).into(), SourceSpan::default()),
                 vec![$(Param::from((format!("_{}", stringify!($param_ty)).into(), Some(builtin_ty_v2!($param_ty))))),*],
-                FunctionKind::Native(|_, _| unreachable!("interface function should not be called"))
+                FunctionKind::Native(|_, _| unreachable!("interface function should not be called")),
+                None
             ),
         ] $($rest)*)
     };
@@ -261,10 +265,10 @@ macro_rules! builtin_interface {
 
 mod collections;
 mod encoding;
-mod file;
 mod io;
 mod math;
 mod operators;
+mod os;
 mod units;
 
 pub type NativeFn = fn(&mut Context, Vec<Value>) -> Result<Value, Exception>;
@@ -312,7 +316,7 @@ pub fn register_builtin_module(ctx: &mut Context) {
         .with_function(builtin_fn_v2!("dir", |&ctx, v: any?| {
             let mut names: Vec<String> = Vec::new();
 
-            let mut collect_module_names = |module: &Module| {
+            let mut collect_module_names = |module: &Module, include_opened: bool| {
                 names.extend(module.names.iter_names().map(|name| name.to_string()));
                 names.extend(
                     module
@@ -320,13 +324,21 @@ pub fn register_builtin_module(ctx: &mut Context) {
                         .keys()
                         .map(|name| name.to_string()),
                 );
-                for module_id in &module.opened {
-                    names.extend(
-                        ctx.modules[*module_id]
-                            .names
-                            .iter_names()
-                            .map(|name| name.to_string()),
-                    );
+                names.extend(
+                    ctx.modules
+                        .child_module_names(module.id)
+                        .into_iter()
+                        .map(|name| name.to_string()),
+                );
+                if include_opened {
+                    for module_id in &module.opened {
+                        names.extend(
+                            ctx.modules[*module_id]
+                                .names
+                                .iter_names()
+                                .map(|name| name.to_string()),
+                        );
+                    }
                 }
             };
 
@@ -336,7 +348,7 @@ pub fn register_builtin_module(ctx: &mut Context) {
                     if let Some(module) = ctx.active_module() {
                         let in_function = ctx.call_stack_len() > 1;
                         if !in_function {
-                            collect_module_names(module);
+                            collect_module_names(module, true);
                         }
                         for scope in ctx.local_scopes() {
                             names.extend(scope.vars().keys().map(|name| name.to_string()));
@@ -359,7 +371,7 @@ pub fn register_builtin_module(ctx: &mut Context) {
                     if handle.tag() == Ustr::from("module") {
                         let module_id = handle.borrow::<ModuleId>(Ustr::from("module"), ctx)?;
                         let module = &ctx.modules[*module_id];
-                        collect_module_names(module);
+                        collect_module_names(module, false);
                     } else {
                         names.extend(
                             ctx.handle_methods
@@ -386,9 +398,9 @@ pub fn register_builtin_module(ctx: &mut Context) {
 
     collections::register(ctx);
     encoding::register(ctx);
-    file::register(ctx);
     io::register(ctx);
     math::register(ctx);
     operators::register(ctx);
+    os::register(ctx);
     units::register(ctx);
 }

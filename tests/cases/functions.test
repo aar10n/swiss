@@ -51,3 +51,38 @@ EXPECT: 1
 TEST: Max multiple
 INPUT: max(5, 2, 8, 1, 9)
 EXPECT: 9
+
+TEST: Return type annotation converts to unit
+INPUT: {
+  fn asin_wrapped(x: num): [rad] { builtin::asin(x) }
+  asin_wrapped(0.5)
+}
+EXPECT: 0.5235987755982989 rad
+
+TEST: Return type annotation converts units
+INPUT: {
+  fn to_deg(x: [rad]): [deg] { x }
+  to_deg(pi rad)
+}
+EXPECT: 180 deg
+
+TEST: Return type annotation mismatch error
+INPUT: {
+  fn bad(): num { "nope" }
+  bad()
+}
+EXPECT_ERROR: TypeError: expected 'num', found 'str'
+
+TEST: Param annotation attaches unit
+INPUT: {
+  fn keep_rad(x: [rad]) { x }
+  keep_rad(0.5)
+}
+EXPECT: 0.5 rad
+
+TEST: Param annotation converts unit
+INPUT: {
+  fn keep_rad(x: [rad]) { x }
+  keep_rad(180deg)
+}
+EXPECT: 3.141592653589793 rad

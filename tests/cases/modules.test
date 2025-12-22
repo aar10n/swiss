@@ -25,3 +25,36 @@ INPUT: {
   io::answer
 }
 EXPECT: 8
+
+TEST: module value typeof
+INPUT: {
+  module io {
+    const X = 123
+  }
+  builtin::typeof(io)
+}
+EXPECT: "module"
+
+TEST: submodule value typeof
+INPUT: {
+  module io {
+    module nested {
+      const X = 123
+    }
+  }
+  builtin::typeof(io::nested)
+}
+EXPECT: "module"
+
+TEST: dir lists module names
+INPUT: {
+  module io {
+    const X = 123
+    fn f() { X }
+    module nested {
+      const Y = 1
+    }
+  }
+  builtin::dir(io)
+}
+EXPECT: ["X", "f", "nested"]

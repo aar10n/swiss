@@ -35,7 +35,7 @@ const BRACK_DELIM: (Token, Token) = (Token::LDelim("["), Token::RDelim("]"));
 
     unit_impl ::= '{' '\n' _ <fn_decl> ('\n' _ <fn_decl> _)* _ '}'
 
-    fn_decl ::= 'fn' _ <ident> _ <param_list> _ [<dim_ret>|<type>] _ <block_expr>
+    fn_decl ::= 'fn' _ <ident> _ <param_list> _ [':' _ (<dim_ret>|<type>)] _ <block_expr>
 
     ------------------------
 
@@ -66,7 +66,7 @@ const BRACK_DELIM: (Token, Token) = (Token::LDelim("["), Token::RDelim("]"));
                 | <expr_atom> _ '...'
                 | <expr_atom>
 
-    expr_atom ::= 'if' <expr> <block_expr> 'else' <block_expr>
+    expr_atom ::= 'if' <expr> <block_expr> ('else' 'if' <expr> <block_expr>)* ('else' <block_expr>)?
                 | 'for' <bind_pat> ':=' <expr> <block_expr>
                 | <path> [ <args_list> ]
                 | <number>
@@ -729,7 +729,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    // fn_decl ::= 'fn' _ <ident> _ <param_list> _ [ <ret_ret> ] _ <block_expr>
+    // fn_decl ::= 'fn' _ <ident> _ <param_list> _ [':' _ (<dim_ret>|<type>)] _ <block_expr>
     fn parse_fn_decl(&mut self) -> ParseResult<FnDecl> {
         self.span_and_trace("parse_fn_decl", |parser| {
             parser.expect(Token::Keyword(Keyword::Fn), "expected 'fn'")?;
@@ -742,7 +742,19 @@ impl<'a> Parser<'a> {
                 .parse_list_zero_or_more(Token::Comma, PAREN_DELIM, false, |p| p.parse_param())?;
             parser.consume_any(Token::Space);
 
-            let ret = if parser.peek_token() == &Token::LDelim("[") {
+            let ret = if parser.consume_one(Token::Colon).is_some() {
+                parser.consume_any(Token::Space);
+                if parser.peek_token() == &Token::LDelim("[") {
+                    Some(Left(parser.parse_dim_ret()?))
+                } else if is_type(parser.peek_token()) {
+                    Some(Right(parser.parse_type()?))
+                } else {
+                    return Err(
+                        SyntaxError::new("expected return type after ':'", parser.position())
+                            .into(),
+                    );
+                }
+            } else if parser.peek_token() == &Token::LDelim("[") {
                 Some(Left(parser.parse_dim_ret()?))
             } else if is_type(parser.peek_token()) {
                 Some(Right(parser.parse_type()?))
@@ -1071,7 +1083,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    // expr_atom ::= 'if' <expr> <block_expr> 'else' <block_expr>
+    // expr_atom ::= 'if' <expr> <block_expr> ('else' 'if' <expr> <block_expr>)* ('else' <block_expr>)?
     //             | 'for' <bind_pat> ':=' 'range' <expr> <block_expr>
     //             | <path> [ <args_list> ]
     //             | <number>
@@ -1086,11 +1098,32 @@ impl<'a> Parser<'a> {
                 let cond = parser.parse_expr(isize::MIN)?;
                 parser.consume_any(Token::Space);
                 let then = parser.parse_block_expr()?;
-                parser.consume_any(Token::Space);
-                parser.expect(Token::Keyword(Keyword::Else), "expected 'else'")?;
-                parser.consume_any(Token::Space);
-                let else_ = parser.parse_block_expr()?;
-                Ok(Expr::if_else(cond, then, else_))
+
+                let mut branches = vec![IfBranch::new(cond, then)];
+                let mut else_branch = None;
+
+                loop {
+                    parser.consume_any(Token::Space);
+                    if parser.consume_one(Token::Keyword(Keyword::Else)).is_none() {
+                        break;
+                    }
+
+                    parser.consume_any(Token::Space);
+                    if parser.consume_one(Token::Keyword(Keyword::If)).is_some() {
+                        parser.consume_any(Token::Space);
+                        let cond = parser.parse_expr(isize::MIN)?;
+                        parser.consume_any(Token::Space);
+                        let body = parser.parse_block_expr()?;
+                        branches.push(IfBranch::new(cond, body));
+                        continue;
+                    }
+
+                    let body = parser.parse_block_expr()?;
+                    else_branch = Some(body);
+                    break;
+                }
+
+                Ok(Expr::if_expr(If::new(branches, else_branch)))
             } else if parser.consume_one(Token::Keyword(Keyword::For)).is_some() {
                 parser.consume_any(Token::Space);
                 let pat = parser.parse_bind_pat()?;
@@ -1232,6 +1265,7 @@ impl<'a> Parser<'a> {
     fn parse_dim_ret(&mut self) -> ParseResult<DimExpr> {
         self.span_and_trace("parse_dim_ret", |parser| {
             parser.consume_any(Token::Space);
+            parser.expect(Token::LDelim("["), "expected '['")?;
             let dim = parser.parse_dim_expr()?;
             parser.consume_any(Token::Space);
             parser.expect(Token::RDelim("]"), "expected ']'")?;

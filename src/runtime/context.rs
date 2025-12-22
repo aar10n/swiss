@@ -1,6 +1,6 @@
 use super::encoding::EncodingRegistry;
 use super::exception::StackFrame;
-use super::handle::HandleMethodRegistry;
+use super::handle::{Handle, HandleMethodRegistry};
 use super::module::{Module, ModuleId, ModuleMap};
 use super::operator::{OpAssoc, OpKind, Operator, OperatorTable};
 use super::path::{PathLike, PathTree};
@@ -15,6 +15,7 @@ use smallvec::SmallVec;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::io;
+use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use ustr::{Ustr, UstrMap};
 
@@ -38,6 +39,35 @@ pub struct Context {
     active_module: Option<ModuleId>,
     call_stack: Vec<StackFrame>,
     local_scopes: Vec<LocalScope>,
+}
+
+pub struct ModuleRef<'a> {
+    ctx: &'a mut Context,
+    module_id: ModuleId,
+}
+
+impl<'a> ModuleRef<'a> {
+    pub fn new_submodule(&mut self, name: impl Into<Ustr>) -> Result<&mut Module, NameError> {
+        self.ctx.modules.new_submodule(self.module_id, name)
+    }
+
+    pub fn id(&self) -> ModuleId {
+        self.module_id
+    }
+}
+
+impl<'a> Deref for ModuleRef<'a> {
+    type Target = Module;
+
+    fn deref(&self) -> &Self::Target {
+        &self.ctx.modules[self.module_id]
+    }
+}
+
+impl<'a> DerefMut for ModuleRef<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.ctx.modules[self.module_id]
+    }
 }
 
 impl Context {
@@ -251,6 +281,18 @@ impl Context {
         }
     }
 
+    pub fn module_mut(&mut self, path: impl PathLike) -> Result<ModuleRef<'_>, NameError> {
+        let module_id = if path.is_empty() {
+            self.active_module().unwrap().id
+        } else {
+            self.modules.get_module(path)?.id
+        };
+        Ok(ModuleRef {
+            ctx: self,
+            module_id,
+        })
+    }
+
     fn resolve_module_id(&self, path: impl PathLike) -> Result<ModuleId, NameError> {
         let parts = path.parts();
         if parts.is_empty() {
@@ -282,6 +324,10 @@ impl Context {
             .map_err(|_| NameError::new("invalid module", parts.to_spanned_string()))
     }
 
+    fn module_value(&self, module_id: ModuleId) -> ValueRef {
+        ValueRef::new_const(Value::Handle(Handle::new(Ustr::from("module"), module_id)))
+    }
+
     pub fn resolve_variable(&mut self, path: impl PathLike) -> Result<ValueRef, NameError> {
         let name = path.base_part();
         let module_id = if path.len() == 1 {
@@ -300,6 +346,8 @@ impl Context {
             Err(_) => {
                 if let Ok(func) = self.modules.resolve_function_in(module_id, name.clone()) {
                     Ok(ValueRef::new_const(Value::Function(func.clone())))
+                } else if let Ok(module_id) = self.resolve_module_id(path.parts()) {
+                    Ok(self.module_value(module_id))
                 } else {
                     Err(NameError::new("undefined", name.to_string_inner()))
                 }

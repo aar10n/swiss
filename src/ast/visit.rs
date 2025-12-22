@@ -374,10 +374,14 @@ impl Visit for Expr {
                 expr.visit(visitor)?;
                 unit.visit(visitor)?;
             }
-            ExprKind::IfElse(cond, then, else_) => {
-                cond.visit(visitor)?;
-                then.visit(visitor)?;
-                else_.visit(visitor)?;
+            ExprKind::If(if_expr) => {
+                for branch in if_expr.branches.iter_mut() {
+                    branch.cond.visit(visitor)?;
+                    branch.body.visit(visitor)?;
+                }
+                if let Some(else_) = &mut if_expr.else_branch {
+                    else_.visit(visitor)?;
+                }
             }
             ExprKind::ForRange(pat, iter, body) => {
                 todo!()

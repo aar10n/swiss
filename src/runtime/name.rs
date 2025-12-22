@@ -57,11 +57,22 @@ pub struct Function {
     pub name: Spanned<Ustr>,
     pub params: Vec<Param>,
     pub kind: FunctionKind,
+    pub ret: Option<Spanned<Ty>>,
 }
 
 impl Function {
-    pub fn new(name: Spanned<Ustr>, params: Vec<Param>, kind: FunctionKind) -> Self {
-        Self { name, params, kind }
+    pub fn new(
+        name: Spanned<Ustr>,
+        params: Vec<Param>,
+        kind: FunctionKind,
+        ret: Option<Spanned<Ty>>,
+    ) -> Self {
+        Self {
+            name,
+            params,
+            kind,
+            ret,
+        }
     }
 
     pub fn builtin(name: &str, params: Vec<Param>, func: NativeFn) -> Self {
@@ -69,6 +80,7 @@ impl Function {
             name: Spanned::new(Ustr::from(name), SourceSpan::default()),
             params,
             kind: FunctionKind::Native(func),
+            ret: None,
         }
     }
 
@@ -77,6 +89,7 @@ impl Function {
             name,
             params,
             kind: FunctionKind::Source(body),
+            ret: None,
         }
     }
 
@@ -290,7 +303,7 @@ impl Name {
     }
 
     pub fn function(name: Spanned<Ustr>, params: Vec<Param>, kind: FunctionKind) -> Self {
-        Name::Function(Function::new(name, params, kind))
+        Name::Function(Function::new(name, params, kind, None))
     }
 
     pub fn kind(&self) -> &str {

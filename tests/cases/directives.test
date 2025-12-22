@@ -116,3 +116,13 @@ INPUT: {
   bad(1)
 }
 EXPECT_ERROR: builtin wrappers must target a builtin function
+
+TEST: Dir inside function uses locals only
+INPUT: {
+  fn inner(a: any) {
+    b = 1
+    dir()
+  }
+  inner(2)
+}
+EXPECT: ["a", "b"]

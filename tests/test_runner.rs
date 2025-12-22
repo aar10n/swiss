@@ -942,16 +942,16 @@ fn resolve_swiss_bin() -> Result<PathBuf, Box<dyn Error>> {
         });
     }
 
+    // Ensure the swiss binary is up to date before running tests.
+    let status = Command::new("cargo")
+        .args(["build", "--bin", "swiss"])
+        .status()?;
+    if !status.success() {
+        return Err("failed to build swiss binary".into());
+    }
+
     // Fallback to target/debug/swiss
     let path = PathBuf::from("target/debug/swiss");
-    if !path.exists() {
-        let status = Command::new("cargo")
-            .args(["build", "--bin", "swiss"])
-            .status()?;
-        if !status.success() {
-            return Err("failed to build swiss binary".into());
-        }
-    }
     Ok(env::current_dir()?.join(path))
 }
 

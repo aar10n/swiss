@@ -521,6 +521,18 @@ pub mod coerce {
                     ) {
                         match v {
                             Value::Quantity(q) => {
+                                if q.dim.is_none() {
+                                    let result_dim = Dim::simple(
+                                        d.expr.clone(),
+                                        target_suffix,
+                                        target_conv.clone(),
+                                    );
+                                    return Value::Quantity(Quantity::new(
+                                        q.number.clone(),
+                                        result_dim,
+                                    ));
+                                }
+
                                 // Check dimension compatibility (but don't fail here, type checking will catch mismatches)
                                 if q.dim.expr != d.expr {
                                     // Dimension mismatch - return as-is

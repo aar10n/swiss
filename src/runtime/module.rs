@@ -89,6 +89,14 @@ impl Module {
         self
     }
 
+    pub fn new_submodule<'a>(
+        &'a mut self,
+        modules: &'a mut ModuleMap,
+        name: impl Into<Ustr>,
+    ) -> Result<&'a mut Module, NameError> {
+        modules.new_submodule(self.id, name)
+    }
+
     pub fn register_dimension(&mut self, dim: Dimension) -> Result<(), DeclError> {
         if let Some(existing) = self.dimensions.get(dim.name.raw) {
             return Err(DeclError::new(
@@ -328,6 +336,17 @@ impl ModuleMap {
         Ok(module)
     }
 
+    pub fn new_submodule(
+        &mut self,
+        parent_id: ModuleId,
+        name: impl Into<Ustr>,
+    ) -> Result<&mut Module, NameError> {
+        let mut path = self.module_path(parent_id).clone();
+        let name = Spanned::new(name.into(), SourceSpan::default());
+        path.push(name);
+        self.new_module(path)
+    }
+
     pub fn get_or_add_module(&mut self, path: impl PathLike) -> Result<&mut Module, NameError> {
         let next_index = self.module_tree.len();
         let parts = path.parts();
@@ -345,6 +364,33 @@ impl ModuleMap {
     pub fn module_path(&self, module_id: ModuleId) -> &SmallVec<[Spanned<Ustr>; 4]> {
         let index = self.module_to_index[&module_id];
         &self.module_paths[index]
+    }
+
+    pub fn child_module_names(&self, module_id: ModuleId) -> Vec<Ustr> {
+        let base = self.module_path(module_id);
+        let base_len = base.len();
+        let mut names = Vec::new();
+
+        for path in &self.module_paths {
+            if path.len() != base_len + 1 {
+                continue;
+            }
+
+            if path
+                .iter()
+                .take(base_len)
+                .zip(base.iter())
+                .any(|(left, right)| left.raw != right.raw)
+            {
+                continue;
+            }
+
+            if let Some(name) = path.get(base_len) {
+                names.push(name.raw);
+            }
+        }
+
+        names
     }
 
     // Overlay resolution that honors a module's opened list.

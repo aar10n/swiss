@@ -817,8 +817,8 @@ impl<'ctx> Interpreter<'ctx> {
         };
 
         match result {
-            Ok(value) => Ok(value),
-            Err(InterpError::Return(value)) => Ok(value),
+            Ok(value) => self.coerce_and_check_return(f, value, call_site),
+            Err(InterpError::Return(value)) => self.coerce_and_check_return(f, value, call_site),
             Err(err) => Err(err),
         }
     }
@@ -953,9 +953,119 @@ impl<'ctx> Interpreter<'ctx> {
         };
 
         match result {
-            Ok(value) => Ok(value),
-            Err(InterpError::Return(value)) => Ok(value),
+            Ok(value) => self.coerce_and_check_return(f, value, call_site),
+            Err(InterpError::Return(value)) => self.coerce_and_check_return(f, value, call_site),
             Err(err) => Err(err),
+        }
+    }
+
+    fn coerce_and_check_return(
+        &mut self,
+        f: &Function,
+        value: Value,
+        call_site: SourceSpan,
+    ) -> InterpResult<Value> {
+        let ret_ty = match &f.ret {
+            Some(ret) => ret.raw.clone(),
+            None => return Ok(value),
+        };
+
+        let value = rt::coerce::to_ty(self.ctx, value, ret_ty.clone());
+        if self.value_matches_ty(&value, &ret_ty) {
+            Ok(value)
+        } else {
+            Err(InterpError::TypeError(
+                TypeError::mismatch(
+                    ret_ty.pretty_string(self.ctx),
+                    call_site.into_spanned(value.ty().pretty_string(self.ctx)),
+                )
+                .with_context(f.name.to_string_inner()),
+            ))
+        }
+    }
+
+    fn value_matches_ty(&self, value: &Value, ty: &rt::Ty) -> bool {
+        match ty {
+            rt::Ty::Any => true,
+            rt::Ty::Empty => matches!(value, Value::Empty)
+                || matches!(value, Value::Ref(r) if matches!(&*r.borrow(), Value::Empty)),
+            rt::Ty::Bool => matches!(value.ty(), rt::Ty::Bool),
+            rt::Ty::Float => matches!(value.ty(), rt::Ty::Float),
+            rt::Ty::Int => matches!(value.ty(), rt::Ty::Int),
+            rt::Ty::Str => matches!(value.ty(), rt::Ty::Str),
+            rt::Ty::Num => matches!(value.ty(), rt::Ty::Int | rt::Ty::Float | rt::Ty::Dim(_)),
+            rt::Ty::Function => matches!(value.ty(), rt::Ty::Function),
+            rt::Ty::Handle(tag) => matches!(value.ty(), rt::Ty::Handle(found) if &found == tag),
+            rt::Ty::Dim(target) => {
+                let dim_matches = |dim: &rt::Dim| {
+                    if dim.expr != target.expr {
+                        return false;
+                    }
+
+                    if target.unit.is_some() {
+                        dim == target
+                    } else {
+                        true
+                    }
+                };
+
+                match value {
+                    Value::Quantity(q) => dim_matches(&q.dim),
+                    Value::Ref(r) => {
+                        let borrowed = r.borrow();
+                        match &*borrowed {
+                            Value::Quantity(q) => dim_matches(&q.dim),
+                            _ => false,
+                        }
+                    }
+                    _ => false,
+                }
+            }
+            rt::Ty::List => matches!(value.ty(), rt::Ty::List),
+            rt::Ty::Object => matches!(value.ty(), rt::Ty::Object),
+            rt::Ty::Tuple(expected) => {
+                match value {
+                    Value::Tuple(items) => {
+                        if items.len() != expected.len() {
+                            return false;
+                        }
+
+                        for (item, expected_ty) in items.iter().zip(expected.iter()) {
+                            if !self.value_matches_ty(item, expected_ty) {
+                                return false;
+                            }
+                        }
+
+                        true
+                    }
+                    Value::Ref(r) => {
+                        let borrowed = r.borrow();
+                        match &*borrowed {
+                            Value::Tuple(items) => {
+                                if items.len() != expected.len() {
+                                    return false;
+                                }
+
+                                for (item, expected_ty) in items.iter().zip(expected.iter()) {
+                                    if !self.value_matches_ty(item, expected_ty) {
+                                        return false;
+                                    }
+                                }
+
+                                true
+                            }
+                            _ => false,
+                        }
+                    }
+                    _ => false,
+                }
+            }
+            rt::Ty::Unit => matches!(value.ty(), rt::Ty::Unit),
+            rt::Ty::Type => matches!(value.ty(), rt::Ty::Type),
+            rt::Ty::Ref(inner) => match value {
+                Value::Ref(r) => self.value_matches_ty(&r.borrow(), inner),
+                _ => false,
+            },
         }
     }
 }
@@ -1421,6 +1531,34 @@ impl<'ctx> Interp<'ctx, Function> for FnDecl {
 
             let name = self.name.as_spanned_ustr();
             let params = self.params.eval(intrp)?;
+            let ret = match &self.ret {
+                Some(Left(dim_node)) => {
+                    let ty = if let DimExprKind::Ident(ident) = &dim_node.kind {
+                        let module_id = intrp.ctx.active_module().unwrap().id;
+                        if let Ok(unit) = intrp
+                            .ctx
+                            .modules
+                            .resolve_unit_suffix_in(module_id, ident.as_spanned_ustr())
+                        {
+                            rt::Ty::Dim(rt::Dim::simple(
+                                unit.dim_expr.clone(),
+                                ident.raw,
+                                unit.conversion.clone(),
+                            ))
+                        } else {
+                            rt::Ty::Dim(rt::Dim::from(dim_node.eval(intrp)?))
+                        }
+                    } else {
+                        rt::Ty::Dim(rt::Dim::from(dim_node.eval(intrp)?))
+                    };
+                    Some(dim_node.span().into_spanned(ty))
+                }
+                Some(Right(ty_node)) => {
+                    let ty = ty_node.eval(intrp)?;
+                    Some(ty_node.span().into_spanned(ty))
+                }
+                None => None,
+            };
             let kind = if self.is_builtin_wrapper {
                 if self.body.items.len() != 1 {
                     return Err(TypeError::simple(
@@ -1479,7 +1617,7 @@ impl<'ctx> Interp<'ctx, Function> for FnDecl {
                 rt::FunctionKind::Source(self.body.clone())
             };
 
-            Ok(Function::new(name, params, kind))
+            Ok(Function::new(name, params, kind, ret))
         }}
     }
 }
@@ -1802,13 +1940,21 @@ impl<'ctx> Interp<'ctx, LRValue> for Expr {
                         .into()),
                     }
                 }
-                ExprKind::IfElse(cond, then, else_) => {
-                    let cond = Interp::<Value>::eval(cond, intrp)?;
-                    Ok(LRValue::R(if !cond.is_zero() {
-                        Interp::<Value>::eval(then, intrp)?
+                ExprKind::If(if_expr) => {
+                    for branch in if_expr.branches.iter() {
+                        let cond = Interp::<Value>::eval(&branch.cond, intrp)?;
+                        if !cond.is_zero() {
+                            let value = Interp::<Value>::eval(&branch.body, intrp)?;
+                            return Ok(LRValue::R(value));
+                        }
+                    }
+
+                    if let Some(else_) = &if_expr.else_branch {
+                        let value = Interp::<Value>::eval(else_, intrp)?;
+                        Ok(LRValue::R(value))
                     } else {
-                        Interp::<Value>::eval(else_, intrp)?
-                    }))
+                        Ok(LRValue::R(Value::Empty))
+                    }
                 }
                 ExprKind::ForRange(pat, iter, body) => {
                     let pat = pat.eval(intrp)?;

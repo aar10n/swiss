@@ -291,7 +291,7 @@ fn delete(obj: object, key: str) { builtin::delete(obj, key) }
 #[builtin]
 fn append(list: list, item: any) { builtin::append(list, item) }
 #[builtin]
-fn open(path: str) { builtin::open(path) }
+fn open(path: str) { builtin::os::open(path) }
 
 #[builtin]
 fn write(io, v: any) { builtin::write(io, v) }

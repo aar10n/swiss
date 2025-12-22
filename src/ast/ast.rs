@@ -612,6 +612,36 @@ impl ObjectField {
 }
 
 #[derive(Clone, Debug)]
+pub struct IfBranch {
+    pub cond: P<Expr>,
+    pub body: ListNode<Stmt>,
+}
+
+impl IfBranch {
+    pub fn new(cond: Expr, body: ListNode<Stmt>) -> Self {
+        Self {
+            cond: cond.into(),
+            body,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct If {
+    pub branches: Vec<IfBranch>,
+    pub else_branch: Option<ListNode<Stmt>>,
+}
+
+impl If {
+    pub fn new(branches: Vec<IfBranch>, else_branch: Option<ListNode<Stmt>>) -> Self {
+        Self {
+            branches,
+            else_branch,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum ExprKind {
     /// An assignment expresion.
     Assign(P<BindPat>, P<Expr>),
@@ -627,8 +657,8 @@ pub enum ExprKind {
     PostfixOp(P<Expr>, Operator),
     /// A unit cast expression.
     UnitCast(P<Expr>, Unit),
-    // An if-else expression.
-    IfElse(P<Expr>, ListNode<Stmt>, ListNode<Stmt>),
+    /// An if expression.
+    If(If),
     // A for-range expression.
     ForRange(P<BindPat>, P<Expr>, ListNode<Stmt>),
     /// A function call expression.
@@ -697,8 +727,8 @@ impl Expr {
         Self::new(ExprKind::UnitCast(expr.into(), unit))
     }
 
-    pub fn if_else(cond: Expr, then: ListNode<Stmt>, else_: ListNode<Stmt>) -> Self {
-        Self::new(ExprKind::IfElse(cond.into(), then, else_))
+    pub fn if_expr(if_expr: If) -> Self {
+        Self::new(ExprKind::If(if_expr))
     }
 
     pub fn for_range(bind: BindPat, expr: Expr, body: ListNode<Stmt>) -> Self {
