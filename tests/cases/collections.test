@@ -1,0 +1,66 @@
+INCLUDE: prelude.ch
+
+TEST: Map over list
+INPUT: {
+  xs = [1, 2, 3]
+  res = []
+  for v := range map(xs, x => x * 2) {
+    res = append(res, v)
+  }
+  res
+}
+EXPECT: [2, 4, 6]
+
+TEST: Filter evens
+INPUT: {
+  xs = [1, 2, 3, 4, 5, 6]
+  res = []
+  for v := range filter(xs, x => x % 2 == 0) {
+    res = append(res, v)
+  }
+  res
+}
+EXPECT: [2, 4, 6]
+
+TEST: Enumerate list
+INPUT: {
+  xs = ["a", "b"]
+  res = []
+  for item := range enumerate(xs) {
+    res = append(res, item)
+  }
+  res
+}
+EXPECT: [(0, "a"), (1, "b")]
+
+TEST: Reduce with init
+INPUT: {
+  xs = [1, 2, 3, 4]
+  reduce(xs, (a, b) => a + b, 0)
+}
+EXPECT: 10
+
+TEST: Reduce without init
+INPUT: {
+  xs = [1, 2, 3]
+  reduce(xs, (a, b) => a + b)
+}
+EXPECT: 6
+
+TEST: Reduce empty without init returns empty
+INPUT: {
+  xs = []
+  reduce(xs, (a, b) => a + b)
+}
+EXPECT: ()
+
+TEST: Map and filter chaining
+INPUT: {
+  xs = [1, 2, 3, 4, 5]
+  res = []
+  for v := range map(filter(xs, x => x > 2), x => x * 10) {
+    res = append(res, v)
+  }
+  res
+}
+EXPECT: [30, 40, 50]

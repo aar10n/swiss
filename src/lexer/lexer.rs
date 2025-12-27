@@ -351,8 +351,15 @@ impl<'a> Lexer<'a> {
             } else {
                 Token::Colon
             }
-        } else if op == '=' && !is_operator_char(self.peek(0)) {
-            Token::Assign
+        } else if op == '=' {
+            if self.peek(0) == '>' {
+                self.take_one();
+                Token::FatArrow
+            } else if !is_operator_char(self.peek(0)) {
+                Token::Assign
+            } else {
+                Token::Operator(Ustr::from(&op.to_string()))
+            }
         } else if op == '&' {
             Token::Ampersand
         } else {
@@ -393,7 +400,7 @@ impl<'a> Lexer<'a> {
         self.offset += ch.len_utf8();
         if ch == '\n' {
             self.state = LexerState::StartOfLine;
-        } else if self.state == LexerState::StartOfLine {
+        } else if self.state == LexerState::StartOfLine && !is_whitespace_char(ch) {
             self.state = LexerState::MiddleOfLine;
         } else if self.state == LexerState::StartOfDirective {
             self.state = LexerState::MiddleOfDirective;

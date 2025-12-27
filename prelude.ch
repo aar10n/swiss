@@ -32,12 +32,10 @@
 ;   right - Take the unit from the right side.
 #[unit_preference="left"]
 
-
 ;
-; Operators
+; Types
 ;
 
-; types:
 ;   any
 ;   bool
 ;   float
@@ -45,9 +43,34 @@
 ;   str
 ;   num
 ;   list
+;   iter
 ;   tuple[T...] or (T...)
+;   object
 ;   unit
 ;   type
+
+#[builtin]
+fn (bool) new(): bool { builtin::bool_new() }
+#[builtin]
+fn (int) new(): int { builtin::int_new() }
+#[builtin]
+fn (float) new(): float { builtin::float_new() }
+#[builtin]
+fn (str) new(): str { builtin::str_new() }
+#[builtin]
+fn (iter) new(v: iter): iter { builtin::iter_new(v) }
+#[builtin]
+fn (list) new(v: iter): list { builtin::list_new(v) }
+#[builtin]
+fn (tuple) new(v: iter): tuple { builtin::tuple_new(v) }
+#[builtin]
+fn (object) new(v: iter): object { builtin::object_new(v) }
+#[builtin]
+fn (unit) new(n: str): unit { builtin::unit_new(n) }
+
+;
+; Operators
+;
 
 #[associativity="right"]
 #[precedence=0]
@@ -59,8 +82,8 @@ infix operator (*=)(&num,num) = builtin::mul_assign
 infix operator (/=)(&num,num) = builtin::div_assign
 #[associativity="left"]
 #[precedence=2]
-infix operator (==)(num,num) = builtin::eq
-infix operator (!=)(num,num) = builtin::ne
+infix operator (==)(any,any) = builtin::eq
+infix operator (!=)(any,any) = builtin::ne
 #[precedence=3]
 infix operator (<)(num,num) = builtin::lt
 infix operator (>)(num,num) = builtin::gt
@@ -78,7 +101,7 @@ infix operator (>>)(num,num) = builtin::bit_shr
 #[precedence=7]
 prefix operator (+)(num) = builtin::pos
 prefix operator (-)(num) = builtin::neg
-prefix operator (!)(num) = builtin::not
+prefix operator (!)(any) = builtin::not
 prefix operator (~)(num) = builtin::bit_not
 ; ------------------------
 #[associativity="left"]
@@ -99,6 +122,21 @@ infix operator (->)(num,unit) = builtin::unit_cast
 #[precedence=12]
 infix operator ([])(any,any) = builtin::index
 infix operator (.)(any,any) = builtin::method_call
+
+;
+; Builtin Types
+;
+
+#[type=builtin::io]
+type io
+
+#[builtin]
+; Writes a value to an io handle.
+fn (io) write(io: io, v: any) { builtin::io_impl::write(io, v) }
+
+#[builtin]
+; Writes a value plus a newline to an io handle.
+fn (io) writeln(io: io, v: any) { builtin::io_impl::writeln(io, v) }
 
 ;
 ; Dimensions and Units
@@ -278,6 +316,11 @@ const phi = 1.61803398874989484820
 ; General Functions
 ;
 
+import fs::{file, open}
+
+#[builtin]
+fn error(msg: str?) { builtin::error(msg) }
+
 #[builtin]
 fn dir(x: any?) { builtin::dir(x) }
 #[builtin]
@@ -291,17 +334,15 @@ fn delete(obj: object, key: str) { builtin::delete(obj, key) }
 #[builtin]
 fn append(list: list, item: any) { builtin::append(list, item) }
 #[builtin]
-fn open(path: str) { builtin::os::open(path) }
-
+fn map(xs: iter, f: fn) { builtin::map(xs, f) }
 #[builtin]
-fn write(io, v: any) { builtin::write(io, v) }
+fn filter(xs: iter, pred: fn) { builtin::filter(xs, pred) }
 #[builtin]
-fn writeln(io, v: any) { builtin::writeln(io, v) }
-
+fn reduce(xs: iter, f: fn, init: any?) { builtin::reduce(xs, f, init) }
 #[builtin]
-fn json_encode(value) { builtin::json_encode(value) }
+fn enumerate(xs: iter) { builtin::enumerate(xs) }
 #[builtin]
-fn json_decode(text) { builtin::json_decode(text) }
+fn next(xs: iter) { builtin::next(xs) }
 
 ; Formatters
 

@@ -1,7 +1,9 @@
-use super::{Context, Exception, List, VRef, Value};
+use super::{Context, Exception, List, Object, Tuple, Value};
+
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use smallvec::SmallVec;
-use ustr::Ustr;
 
 // MARK: Iterable
 
@@ -9,6 +11,52 @@ pub trait Iterable {
     fn next(&mut self, ctx: &mut Context) -> Result<Option<Value>, Exception>;
     fn size_hint(&self) -> Option<usize> {
         None
+    }
+    fn collect_roots(&self, _roots: &mut Vec<Value>) {}
+}
+
+// MARK: IterValue
+
+#[derive(Clone)]
+pub struct IterValue {
+    inner: Rc<RefCell<Box<dyn Iterable>>>,
+}
+
+impl IterValue {
+    pub fn new(iter: Box<dyn Iterable>) -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(iter)),
+        }
+    }
+
+    pub fn shared_iter(&self) -> SharedIter {
+        SharedIter {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+impl std::fmt::Debug for IterValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IterValue").finish()
+    }
+}
+
+pub struct SharedIter {
+    inner: Rc<RefCell<Box<dyn Iterable>>>,
+}
+
+impl Iterable for SharedIter {
+    fn next(&mut self, ctx: &mut Context) -> Result<Option<Value>, Exception> {
+        self.inner.borrow_mut().next(ctx)
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        self.inner.borrow().size_hint()
+    }
+
+    fn collect_roots(&self, roots: &mut Vec<Value>) {
+        self.inner.borrow().collect_roots(roots);
     }
 }
 
@@ -51,17 +99,21 @@ impl Iterable for ListIterator {
     fn size_hint(&self) -> Option<usize> {
         Some(self.list.len() - self.index)
     }
+
+    fn collect_roots(&self, roots: &mut Vec<Value>) {
+        roots.push(Value::List(self.list.clone()));
+    }
 }
 
 // MARK: TupleIterator
 
 pub struct TupleIterator {
-    tuple: SmallVec<[Box<Value>; 3]>,
+    tuple: Tuple,
     index: usize,
 }
 
 impl TupleIterator {
-    pub fn new(tuple: SmallVec<[Box<Value>; 3]>) -> Self {
+    pub fn new(tuple: Tuple) -> Self {
         Self { tuple, index: 0 }
     }
 }
@@ -92,17 +144,21 @@ impl Iterable for TupleIterator {
     fn size_hint(&self) -> Option<usize> {
         Some(self.tuple.len() - self.index)
     }
+
+    fn collect_roots(&self, roots: &mut Vec<Value>) {
+        roots.push(Value::Tuple(self.tuple.clone()));
+    }
 }
 
 // MARK: ObjectIterator
 
 pub struct ObjectIterator {
-    object: VRef<Vec<(Ustr, Value)>>,
+    object: Object,
     index: usize,
 }
 
 impl ObjectIterator {
-    pub fn new(object: VRef<Vec<(Ustr, Value)>>) -> Self {
+    pub fn new(object: Object) -> Self {
         Self { object, index: 0 }
     }
 }
@@ -123,10 +179,10 @@ impl Iterable for ObjectIterator {
                 .with_backtrace(ctx.backtrace())
             })?;
 
-            let tuple = Value::Tuple(SmallVec::from_vec(vec![
+            let tuple = Value::Tuple(Tuple::new(SmallVec::from_vec(vec![
                 Box::new(Value::String(key.to_string())),
                 Box::new(value.clone()),
-            ]));
+            ])));
 
             self.index += 1;
             Ok(Some(tuple))
@@ -137,6 +193,10 @@ impl Iterable for ObjectIterator {
 
     fn size_hint(&self) -> Option<usize> {
         Some(self.object.borrow().len().saturating_sub(self.index))
+    }
+
+    fn collect_roots(&self, roots: &mut Vec<Value>) {
+        roots.push(Value::Object(self.object.clone()));
     }
 }
 

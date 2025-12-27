@@ -1,6 +1,6 @@
 use crate::interp;
 use crate::print::{DisplayString, PrettyString};
-use crate::runtime::{Context, Exception, Handle, IoHandle, Module, Value};
+use crate::runtime::{Context, Exception, Handle, IoHandle, Module, UserTy, Value};
 
 pub(super) fn write_impl(ctx: &mut Context, io: IoHandle, v: Value) -> Result<Value, Exception> {
     let content = match &v {
@@ -54,7 +54,10 @@ pub(super) fn register(ctx: &mut Context) {
                 interp::call_function(
                     ctx,
                     &formatter,
-                    vec![value.clone(), Value::Handle(Handle::new("io".into(), io.clone()))],
+                    vec![
+                        value.clone(),
+                        Value::UserType(UserTy::Handle(Handle::new("io".into(), io.clone()))),
+                    ],
                 )?;
                 if let Some(buf) = io.take_buffer() {
                     ctx.set_pending_output(buf);
@@ -62,19 +65,15 @@ pub(super) fn register(ctx: &mut Context) {
                 Ok(value)
             }),
         );
-
-    ctx.handle_methods.register(
-        "io",
-        "write",
-        builtin_fn_v2!("io.write", |&ctx, io: io, v: any| {
+    ctx.module_mut("builtin")
+        .expect("builtin module should exist")
+        .new_submodule("io_impl")
+        .unwrap()
+        .with_function(builtin_fn_v2!("write", |&ctx, io: io, v: any| {
             write_impl(ctx, io, v)
-        }),
-    );
-    ctx.handle_methods.register(
-        "io",
-        "writeln",
-        builtin_fn_v2!("io.writeln", |&ctx, io: io, v: any| {
-            writeln_impl(ctx, io, v)
-        }),
-    );
+        }))
+        .with_function(builtin_fn_v2!(
+            "writeln",
+            |&ctx, io: io, v: any| { writeln_impl(ctx, io, v) }
+        ));
 }

@@ -14,7 +14,9 @@ mod name;
 mod operator;
 mod path;
 mod pattern;
+mod type_def;
 mod unit;
+mod user_type;
 mod value;
 
 use crate::diag::{Error, IntoError};
@@ -27,13 +29,16 @@ pub use encoding::*;
 pub use exception::*;
 pub use file::*;
 pub use handle::*;
+pub use interface::*;
 pub use io::*;
 pub use module::*;
 pub use name::*;
 pub use operator::*;
 pub use path::*;
 pub use pattern::*;
+pub use type_def::*;
 pub use unit::*;
+pub use user_type::*;
 pub use value::*;
 
 /// A declaration name error.
@@ -53,8 +58,7 @@ impl DeclError {
 impl IntoError for DeclError {
     fn into_error(self) -> Error {
         let msg = format!(
-            "DeclError: conflicting {} declaration for '{}'",
-            self.kind,
+            "DeclError: conflicting declaration for '{}'",
             self.name.as_str()
         );
 

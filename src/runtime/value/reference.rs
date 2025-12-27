@@ -1,7 +1,6 @@
-use super::{iterator::Iterable, Context, Exception, Ty, Value};
+use super::{iterator::Iterable, Context, Exception, Ty, Tuple, Value};
 use crate::print::{PrettyPrint, PrettyString};
 
-use smallvec::SmallVec;
 use std::cell::{self, RefCell};
 use std::rc::{Rc, Weak};
 
@@ -102,11 +101,16 @@ impl ValueRef {
         (*self.inner.borrow()).clone()
     }
 
-    pub fn set(&self, value: Value) {
+    pub fn set(&self, ctx: &Context, value: Value) -> Result<(), Exception> {
         if !self.is_const {
             *self.inner.borrow_mut() = value;
+            Ok(())
         } else {
-            panic!("attempted to modify a const value");
+            Err(Exception::new(
+                "MutabilityError",
+                "cannot modify const value".to_string(),
+            )
+            .with_backtrace(ctx.backtrace()))
         }
     }
 
@@ -114,11 +118,15 @@ impl ValueRef {
         self.inner.borrow()
     }
 
-    pub fn borrow_mut(&self) -> cell::RefMut<Value> {
+    pub fn borrow_mut(&self, ctx: &Context) -> Result<cell::RefMut<Value>, Exception> {
         if !self.is_const {
-            self.inner.borrow_mut()
+            Ok(self.inner.borrow_mut())
         } else {
-            panic!("attempted to modify a const value");
+            Err(Exception::new(
+                "MutabilityError",
+                "cannot modify const value".to_string(),
+            )
+            .with_backtrace(ctx.backtrace()))
         }
     }
 
@@ -133,7 +141,7 @@ impl ValueRef {
         Value::Ref(self)
     }
 
-    pub fn try_into_tuple(self, ctx: &Context) -> Result<SmallVec<[Box<Value>; 3]>, Exception> {
+    pub fn try_into_tuple(self, ctx: &Context) -> Result<Tuple, Exception> {
         let inner_ref = self.borrow();
         inner_ref.clone().try_into_tuple(ctx)
     }

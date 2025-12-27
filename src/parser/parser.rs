@@ -18,7 +18,7 @@ const PAREN_DELIM: (Token, Token) = (Token::LDelim("("), Token::RDelim(")"));
 const BRACK_DELIM: (Token, Token) = (Token::LDelim("["), Token::RDelim("]"));
 
 /*
-    import ::= 'import' _ <path>
+    import ::= 'import' _ <path> [ '::' '{' (<ident> ++ ',') '}' ]
 
     op_decl_assign ::= <op_decl_start> _ '(' <operator> ')' _ <op_decl_param_list> _ '=' <expr>
     op_decl_define ::= <op_decl_start> _ '(' <operator> ')' _ <op_fn_param_list> _ <block_expr>
@@ -68,6 +68,8 @@ const BRACK_DELIM: (Token, Token) = (Token::LDelim("["), Token::RDelim("]"));
 
     expr_atom ::= 'if' <expr> <block_expr> ('else' 'if' <expr> <block_expr>)* ('else' <block_expr>)?
                 | 'for' <bind_pat> ':=' <expr> <block_expr>
+                | 'try' <expr> ('catch' <ident>? <block_expr>)?
+                | 'try' <block_expr> ('catch' <ident>? <block_expr>)?
                 | <path> [ <args_list> ]
                 | <number>
                 | <string>
@@ -131,6 +133,7 @@ pub struct Parser<'a> {
     trace_level: usize,
     module_depth: usize,
     pending_builtin_wrapper: bool,
+    pending_type_decl: Option<Path>,
 }
 
 impl<'a> Parser<'a> {
@@ -148,6 +151,7 @@ impl<'a> Parser<'a> {
             trace_level: 0,
             module_depth: 0,
             pending_builtin_wrapper: false,
+            pending_type_decl: None,
         }
     }
 
@@ -172,6 +176,13 @@ impl<'a> Parser<'a> {
             )
             .into());
         }
+        if self.pending_type_decl.is_some() {
+            return Err(SyntaxError::new(
+                "expected type declaration after '#[type=...]'",
+                self.position(),
+            )
+            .into());
+        }
 
         Ok(Module::new(self.source_id, self.ctx.id, items))
     }
@@ -183,6 +194,9 @@ impl<'a> Parser<'a> {
 
             let next_token = parser.peek_token();
             let item = if parser.pending_builtin_wrapper {
+                if next_token == &Token::NewLine {
+                    return Ok(None);
+                }
                 if next_token != &Token::Keyword(Keyword::Fn) {
                     return Err(SyntaxError::new(
                         "expected fn declaration after '#[builtin]'",
@@ -194,6 +208,20 @@ impl<'a> Parser<'a> {
                 decl.is_builtin_wrapper = true;
                 parser.pending_builtin_wrapper = false;
                 Some(Item::fn_decl(decl))
+            } else if parser.pending_type_decl.is_some() {
+                if next_token == &Token::NewLine {
+                    return Ok(None);
+                }
+                if next_token != &Token::Keyword(Keyword::Type) {
+                    return Err(SyntaxError::new(
+                        "expected type declaration after '#[type=...]'",
+                        parser.position(),
+                    )
+                    .into());
+                }
+                let decl = parser.parse_type_decl()?;
+                parser.pending_type_decl = None;
+                Some(Item::type_decl(decl))
             } else if next_token.is_directive_start() {
                 let directive = parser.parse_directive()?;
                 if matches!(directive.kind, DirectiveKind::Builtin) {
@@ -206,12 +234,25 @@ impl<'a> Parser<'a> {
                     }
                     parser.pending_builtin_wrapper = true;
                     None
+                } else if let DirectiveKind::Type(_) = directive.kind {
+                    if parser.pending_type_decl.is_some() {
+                        return Err(SyntaxError::new(
+                            "expected type declaration after '#[type=...]'",
+                            parser.position(),
+                        )
+                        .into());
+                    }
+                    parser.pending_type_decl = Some(match &directive.kind {
+                        DirectiveKind::Type(path) => (*path.as_ref()).clone(),
+                        _ => unreachable!(),
+                    });
+                    None
                 } else {
                     Some(Item::directive(directive))
                 }
             } else if next_token == &Token::Keyword(Keyword::Import) {
-                let path = parser.parse_import()?;
-                Some(Item::import(path))
+                let import = parser.parse_import()?;
+                Some(Item::import(import))
             } else if next_token == &Token::Keyword(Keyword::Module) {
                 let decl = parser.parse_module_decl()?;
                 Some(Item::module_decl(decl))
@@ -250,7 +291,13 @@ impl<'a> Parser<'a> {
             } else if next_token == &Token::Keyword(Keyword::Fn) {
                 let decl = parser.parse_fn_decl()?;
                 Some(Item::fn_decl(decl))
-            } else if matches!(next_token, &Token::Keyword(kw) if kw.is_op_decl()) {
+            } else if next_token == &Token::Keyword(Keyword::Type) {
+                return Err(SyntaxError::new(
+                    "expected '#[type=...]' before 'type'",
+                    parser.position(),
+                )
+                .into());
+            } else if parser.peek_op_decl_kind().is_some() {
                 let decl = parser.parse_op_decl()?;
                 let op = rt::Operator::new(
                     decl.name.as_spanned_ustr(),
@@ -273,12 +320,50 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_import(&mut self) -> ParseResult<Path> {
+    fn parse_import(&mut self) -> ParseResult<Import> {
         self.trace("parse_import", |parser| {
             parser.expect(Token::Keyword(Keyword::Import), "expected 'import'")?;
             parser.consume_any(Token::Space);
-            let path = parser.parse_path()?;
-            Ok(path)
+            let mut parts = vec![parser.parse_ident()?];
+            while parser.peek_token() == &Token::PathSep {
+                let next_token = parser
+                    .tokens
+                    .get(parser.idx + 1)
+                    .map(|(token, _)| token);
+                if matches!(next_token, Some(Token::LDelim("{"))) {
+                    break;
+                }
+                parser.expect(Token::PathSep, "expected '::'")?;
+                parts.push(parser.parse_ident()?);
+            }
+
+            let path = Path::new(parts);
+
+            if parser.peek_token() == &Token::PathSep {
+                let next_token = parser
+                    .tokens
+                    .get(parser.idx + 1)
+                    .map(|(token, _)| token);
+                if matches!(next_token, Some(Token::LDelim("{"))) {
+                    parser.expect(Token::PathSep, "expected '::'")?;
+                    parser.expect(Token::LDelim("{"), "expected '{'")?;
+                    parser.consume_any(Token::Space);
+
+                    let mut members = vec![];
+                    while parser.peek_token() != &Token::RDelim("}") {
+                        members.push(parser.parse_ident()?);
+                        parser.consume_any(Token::Space);
+                        if parser.consume_one(Token::Comma).is_some() {
+                            parser.consume_any(Token::Space);
+                        }
+                    }
+
+                    parser.expect(Token::RDelim("}"), "expected '}'")?;
+                    return Ok(Import::members(path, members));
+                }
+            }
+
+            Ok(Import::path(path))
         })
     }
 
@@ -329,21 +414,98 @@ impl<'a> Parser<'a> {
             }
             self.consume_any(Token::Space);
         }
+        if self.pending_builtin_wrapper {
+            return Err(SyntaxError::new(
+                "expected fn declaration after '#[builtin]'",
+                self.position(),
+            )
+            .into());
+        }
+        if self.pending_type_decl.is_some() {
+            return Err(SyntaxError::new(
+                "expected type declaration after '#[type=...]'",
+                self.position(),
+            )
+            .into());
+        }
         Ok(items)
     }
 
-    // module_item ::= [ <module_decl> | <const_decl> | <fn_decl> ]
+    // module_item ::= [ <module_decl> | <const_decl> | <fn_decl> | <type_decl> | <directive> ]
     fn parse_module_item(&mut self) -> ParseResult<Option<Item>> {
         self.trace("parse_module_item", |parser| {
             parser.consume_any(Token::Space);
 
             let next_token = parser.peek_token();
-            let item = if next_token == &Token::Keyword(Keyword::Const) {
+            let item = if parser.pending_builtin_wrapper {
+                if next_token == &Token::NewLine {
+                    return Ok(None);
+                }
+                if next_token != &Token::Keyword(Keyword::Fn) {
+                    return Err(SyntaxError::new(
+                        "expected fn declaration after '#[builtin]'",
+                        parser.position(),
+                    )
+                    .into());
+                }
+                let mut decl = parser.parse_fn_decl()?;
+                decl.is_builtin_wrapper = true;
+                parser.pending_builtin_wrapper = false;
+                Some(Item::fn_decl(decl))
+            } else if parser.pending_type_decl.is_some() {
+                if next_token == &Token::NewLine {
+                    return Ok(None);
+                }
+                if next_token != &Token::Keyword(Keyword::Type) {
+                    return Err(SyntaxError::new(
+                        "expected type declaration after '#[type=...]'",
+                        parser.position(),
+                    )
+                    .into());
+                }
+                let decl = parser.parse_type_decl()?;
+                parser.pending_type_decl = None;
+                Some(Item::type_decl(decl))
+            } else if next_token.is_directive_start() {
+                let directive = parser.parse_directive()?;
+                if matches!(directive.kind, DirectiveKind::Builtin) {
+                    if parser.pending_builtin_wrapper {
+                        return Err(SyntaxError::new(
+                            "expected fn declaration after '#[builtin]'",
+                            parser.position(),
+                        )
+                        .into());
+                    }
+                    parser.pending_builtin_wrapper = true;
+                    None
+                } else if let DirectiveKind::Type(_) = directive.kind {
+                    if parser.pending_type_decl.is_some() {
+                        return Err(SyntaxError::new(
+                            "expected type declaration after '#[type=...]'",
+                            parser.position(),
+                        )
+                        .into());
+                    }
+                    parser.pending_type_decl = Some(match &directive.kind {
+                        DirectiveKind::Type(path) => (*path.as_ref()).clone(),
+                        _ => unreachable!(),
+                    });
+                    None
+                } else {
+                    Some(Item::directive(directive))
+                }
+            } else if next_token == &Token::Keyword(Keyword::Const) {
                 let decl = parser.parse_const_decl()?;
                 Some(Item::const_decl(decl))
             } else if next_token == &Token::Keyword(Keyword::Fn) {
                 let decl = parser.parse_fn_decl()?;
                 Some(Item::fn_decl(decl))
+            } else if next_token == &Token::Keyword(Keyword::Type) {
+                return Err(SyntaxError::new(
+                    "expected '#[type=...]' before 'type'",
+                    parser.position(),
+                )
+                .into());
             } else if next_token == &Token::Keyword(Keyword::Module) {
                 let decl = parser.parse_module_decl()?;
                 Some(Item::module_decl(decl))
@@ -438,6 +600,12 @@ impl<'a> Parser<'a> {
                     Directive::default_formatter(name)
                 }
                 "builtin" => Directive::builtin(),
+                "type" => {
+                    parser.expect(Token::Assign, "expected '='")?;
+                    parser.consume_any(Token::Space);
+                    let path = parser.parse_path()?;
+                    Directive::type_path(path)
+                }
                 "float_conversion" => {
                     parser.expect(Token::Assign, "expected '='")?;
                     parser.consume_any(Token::Space);
@@ -658,12 +826,10 @@ impl<'a> Parser<'a> {
     // op_decl_define ::= <op_decl_start> _ 'fn' _ '(' <operator> ')' _ <op_fn_param_list> _ <block_expr>
     fn parse_op_decl(&mut self) -> ParseResult<OpDecl> {
         self.span_and_trace("parse_op_decl", |parser| {
-            let op_kind = parser.expect_map("expected operator keyword", |t| match &t {
-                Token::Keyword(Keyword::Prefix) => Some(OpKind::Prefix),
-                Token::Keyword(Keyword::Postfix) => Some(OpKind::Postfix),
-                Token::Keyword(Keyword::Infix) => Some(OpKind::Infix),
-                _ => None,
-            })?;
+            let op_kind = parser.expect_map(
+                "expected operator kind (prefix, postfix, infix)",
+                op_decl_kind_from_token,
+            )?;
 
             parser.consume_any(Token::Space);
             parser.expect(Token::Keyword(Keyword::Operator), "expected 'operator'")?;
@@ -729,11 +895,23 @@ impl<'a> Parser<'a> {
         })
     }
 
-    // fn_decl ::= 'fn' _ <ident> _ <param_list> _ [':' _ (<dim_ret>|<type>)] _ <block_expr>
+    // fn_decl ::= 'fn' _ ['(' <type> ')'] _ <ident> _ <param_list> _ [':' _ (<dim_ret>|<type>)] _ <block_expr>
     fn parse_fn_decl(&mut self) -> ParseResult<FnDecl> {
         self.span_and_trace("parse_fn_decl", |parser| {
             parser.expect(Token::Keyword(Keyword::Fn), "expected 'fn'")?;
             parser.consume_any(Token::Space);
+
+            let receiver = if parser.peek_token() == &Token::LDelim("(") {
+                parser.expect(Token::LDelim("("), "expected '('")?;
+                parser.consume_any(Token::Space);
+                let receiver = parser.parse_type()?;
+                parser.consume_any(Token::Space);
+                parser.expect(Token::RDelim(")"), "expected ')'")?;
+                parser.consume_any(Token::Space);
+                Some(receiver)
+            } else {
+                None
+            };
 
             let name = parser.parse_ident()?;
             parser.consume_any(Token::Space);
@@ -749,10 +927,11 @@ impl<'a> Parser<'a> {
                 } else if is_type(parser.peek_token()) {
                     Some(Right(parser.parse_type()?))
                 } else {
-                    return Err(
-                        SyntaxError::new("expected return type after ':'", parser.position())
-                            .into(),
-                    );
+                    return Err(SyntaxError::new(
+                        "expected return type after ':'",
+                        parser.position(),
+                    )
+                    .into());
                 }
             } else if parser.peek_token() == &Token::LDelim("[") {
                 Some(Left(parser.parse_dim_ret()?))
@@ -768,7 +947,24 @@ impl<'a> Parser<'a> {
 
             parser.consume_any(Token::Space);
             let body = parser.parse_block_expr()?;
-            Ok(FnDecl::new(name, params, body, ret))
+            Ok(match receiver {
+                Some(receiver) => FnDecl::with_receiver(receiver, name, params, body, ret),
+                None => FnDecl::new(name, params, body, ret),
+            })
+        })
+    }
+
+    // type_decl ::= 'type' _ <ident>
+    fn parse_type_decl(&mut self) -> ParseResult<TypeDecl> {
+        self.span_and_trace("parse_type_decl", |parser| {
+            parser.expect(Token::Keyword(Keyword::Type), "expected 'type'")?;
+            parser.consume_any(Token::Space);
+
+            let name = parser.parse_ident()?;
+            let target = parser.pending_type_decl.clone().ok_or_else(|| {
+                SyntaxError::new("expected '#[type=...]' before 'type'", parser.position())
+            })?;
+            Ok(TypeDecl::new(name, target))
         })
     }
 
@@ -1019,14 +1215,19 @@ impl<'a> Parser<'a> {
         })
     }
 
-    // expr_term ::= '(' _ <expr> _ [(_ <expr> _) ++ ','] ')'
+    // expr_term ::= <lambda>
+    //             | '(' _ <expr> _ [(_ <expr> _) ++ ','] ')'
     //             | '[' (_ <expr> _) ** ',' ']'
     //             | '{' (_ <string> _ ':' _ <expr> _) ** ',' '}'
     //             | <prefix_op> _ <expr>
     //             | <expr_atom>
     fn parse_expr_term(&mut self) -> ParseResult<Expr> {
         self.trace("parse_expr_term", |parser| {
-            if let Some((_, lspan)) = parser.consume_one(Token::LDelim("(")) {
+            if let Some(lambda) = parser.try_parse_ident_lambda()? {
+                Ok(lambda)
+            } else if let Some(lambda) = parser.try_parse_paren_lambda()? {
+                Ok(lambda)
+            } else if let Some((_, lspan)) = parser.consume_one(Token::LDelim("(")) {
                 parser.consume_any(Token::Space);
                 if parser.peek_token() == &Token::RDelim(")") {
                     // Empty unit expression.
@@ -1083,8 +1284,116 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // lambda ::= <ident> _ '=>' _ (<expr> | <block_expr>)
+    //          | '(' _ <param_list>? _ ')' _ '=>' _ (<expr> | <block_expr>)
+    fn try_parse_ident_lambda(&mut self) -> ParseResult<Option<Expr>> {
+        self.trace("try_parse_ident_lambda", |parser| {
+            if !parser.peek_token().is_identifier() {
+                return Ok(None);
+            }
+
+            let save_idx = parser.idx;
+            let save_pos = parser.pos;
+            let save_source_id = parser.source_id;
+
+            let start_pos = parser.pos;
+            let ident = parser.parse_ident()?;
+            parser.consume_any(Token::Space);
+
+            if parser.consume_one(Token::FatArrow).is_none() {
+                parser.idx = save_idx;
+                parser.pos = save_pos;
+                parser.source_id = save_source_id;
+                return Ok(None);
+            }
+
+            parser.consume_any(Token::Space);
+            let body = if parser.peek_token() == &Token::LDelim("{") {
+                LambdaBody::Block(parser.parse_block_expr()?)
+            } else {
+                LambdaBody::Expr(parser.parse_expr(isize::MIN)?.into())
+            };
+
+            let params = vec![Param::new(ident, None)];
+            let span = SourceSpan::new(parser.source_id, start_pos, parser.pos);
+            Ok(Some(Expr::lambda(LambdaExpr::new(params, body)).with_span(span)))
+        })
+    }
+
+    fn try_parse_paren_lambda(&mut self) -> ParseResult<Option<Expr>> {
+        self.trace("try_parse_paren_lambda", |parser| {
+            let save_idx = parser.idx;
+            let save_pos = parser.pos;
+            let save_source_id = parser.source_id;
+
+            let start_pos = parser.pos;
+            if parser.consume_one(Token::LDelim("(")).is_none() {
+                return Ok(None);
+            }
+            parser.consume_any(Token::Space);
+
+            let mut params = Vec::new();
+            if parser.peek_token() != &Token::RDelim(")") {
+                loop {
+                    let param = match parser.parse_param() {
+                        Ok(param) => param,
+                        Err(_) => {
+                            parser.idx = save_idx;
+                            parser.pos = save_pos;
+                            parser.source_id = save_source_id;
+                            return Ok(None);
+                        }
+                    };
+                    params.push(param);
+                    parser.consume_any(Token::Space);
+
+                    if parser.consume_one(Token::Comma).is_some() {
+                        parser.consume_any(Token::Space);
+                        continue;
+                    }
+
+                    if parser.peek_token() != &Token::RDelim(")") {
+                        parser.idx = save_idx;
+                        parser.pos = save_pos;
+                        parser.source_id = save_source_id;
+                        return Ok(None);
+                    }
+
+                    break;
+                }
+            }
+
+            if parser.expect(Token::RDelim(")"), "expected ')'").is_err() {
+                parser.idx = save_idx;
+                parser.pos = save_pos;
+                parser.source_id = save_source_id;
+                return Ok(None);
+            }
+            parser.consume_any(Token::Space);
+
+            if parser.consume_one(Token::FatArrow).is_none() {
+                parser.idx = save_idx;
+                parser.pos = save_pos;
+                parser.source_id = save_source_id;
+                return Ok(None);
+            }
+
+            parser.consume_any(Token::Space);
+            let body = if parser.peek_token() == &Token::LDelim("{") {
+                LambdaBody::Block(parser.parse_block_expr()?)
+            } else {
+                LambdaBody::Expr(parser.parse_expr(isize::MIN)?.into())
+            };
+
+            let span = SourceSpan::new(parser.source_id, start_pos, parser.pos);
+            Ok(Some(Expr::lambda(LambdaExpr::new(params, body)).with_span(span)))
+        })
+    }
+
     // expr_atom ::= 'if' <expr> <block_expr> ('else' 'if' <expr> <block_expr>)* ('else' <block_expr>)?
     //             | 'for' <bind_pat> ':=' 'range' <expr> <block_expr>
+    //             | 'try' <expr> ('catch' <ident>? <block_expr>)?
+    //             | 'try' <block_expr> ('catch' <ident>? <block_expr>)?
     //             | <path> [ <args_list> ]
     //             | <number>
     //             | <string>
@@ -1093,7 +1402,40 @@ impl<'a> Parser<'a> {
     //             | <type>
     fn parse_expr_atom(&mut self) -> ParseResult<Expr> {
         self.trace("parse_expr_atom", |parser| {
-            if parser.consume_one(Token::Keyword(Keyword::If)).is_some() {
+            if parser.consume_one(Token::Keyword(Keyword::Try)).is_some() {
+                parser.consume_any(Token::Space);
+                let body = if parser.peek_token() == &Token::LDelim("{") {
+                    TryBody::Block(parser.parse_block_expr()?)
+                } else {
+                    TryBody::Expr(parser.parse_expr(isize::MIN)?.into())
+                };
+
+                parser.consume_any(Token::Space);
+                let catch = if parser.consume_one(Token::Keyword(Keyword::Catch)).is_some() {
+                    parser.consume_any(Token::Space);
+                    let binding = if parser.peek_token().is_identifier() {
+                        let ident = parser.parse_ident()?;
+                        parser.consume_any(Token::Space);
+                        if parser.peek_token() != &Token::LDelim("{") {
+                            return Err(SyntaxError::new(
+                                "expected '{' after catch binding",
+                                parser.position(),
+                            )
+                            .into());
+                        }
+                        Some(ident)
+                    } else {
+                        None
+                    };
+
+                    let body = parser.parse_block_expr()?;
+                    Some(TryCatch::new(binding, body))
+                } else {
+                    None
+                };
+
+                Ok(Expr::try_expr(TryExpr::new(body, catch)))
+            } else if parser.consume_one(Token::Keyword(Keyword::If)).is_some() {
                 parser.consume_any(Token::Space);
                 let cond = parser.parse_expr(isize::MIN)?;
                 parser.consume_any(Token::Space);
@@ -1288,7 +1630,7 @@ impl<'a> Parser<'a> {
                     parser.expect(Token::RDelim("]"), "expected ']'")?;
                     Some(Either::Left(dim))
                 } else {
-                    let ty = parser.parse_type()?;
+                    let ty = parser.parse_type_core()?;
                     Some(Either::Right(ty))
                 };
                 parser.consume_any(Token::Space);
@@ -1390,11 +1732,27 @@ impl<'a> Parser<'a> {
     //        | '(' (_ <type> _) ++ ',' ')'
     //        | 'any' | 'bool' | 'int' | 'float' | 'num' | 'str' | 'list' | 'object' | 'unit' | 'type'
     //        | 'tuple' _ '[' (_ <type> _) ++ ',' ']'
+    //        | <type> _ '?'
     fn parse_type(&mut self) -> ParseResult<Ty> {
         self.span_and_trace("parse_type", |parser| {
+            let ty = parser.parse_type_core()?;
+            parser.consume_any(Token::Space);
+            if parser
+                .consume_one(Token::Operator(Ustr::from("?")))
+                .is_some()
+            {
+                Ok(Ty::optional(ty))
+            } else {
+                Ok(ty)
+            }
+        })
+    }
+
+    fn parse_type_core(&mut self) -> ParseResult<Ty> {
+        self.span_and_trace("parse_type_core", |parser| {
             if parser.consume_one(Token::Ampersand).is_some() {
                 parser.consume_any(Token::Space);
-                let ty = parser.parse_type()?;
+                let ty = parser.parse_type_core()?;
                 Ok(Ty::ref_(ty))
             } else if parser.peek_token() == &Token::LDelim("(") {
                 let types =
@@ -1411,6 +1769,7 @@ impl<'a> Parser<'a> {
                         Token::Identifier(raw) => Some(raw.clone()),
                         Token::Keyword(Keyword::Unit) => Some("unit".into()),
                         Token::Keyword(Keyword::Fn) => Some("fn".into()),
+                        Token::Keyword(Keyword::Type) => Some("type".into()),
                         _ => None,
                     })
                 })?;
@@ -1423,6 +1782,7 @@ impl<'a> Parser<'a> {
                     "num" => Ty::num(),
                     "str" => Ty::str(),
                     "fn" => Ty::function(),
+                    "iter" => Ty::iter(),
                     "io" => Ty::io(),
                     "unit" => Ty::unit(),
                     "type" => Ty::ty(),
@@ -1430,15 +1790,19 @@ impl<'a> Parser<'a> {
                     "object" => Ty::object(),
                     "tuple" => {
                         parser.consume_any(Token::Space);
-                        let types = parser.parse_list_one_or_more(
-                            Token::Comma,
-                            BRACK_DELIM,
-                            false,
-                            |p| p.parse_type(),
-                        )?;
-                        Ty::tuple(types)
+                        if parser.peek_token() == &Token::LDelim("[") {
+                            let types = parser.parse_list_one_or_more(
+                                Token::Comma,
+                                BRACK_DELIM,
+                                false,
+                                |p| p.parse_type(),
+                            )?;
+                            Ty::tuple(types)
+                        } else {
+                            Ty::tuple(ListNode::new(Vec::new()))
+                        }
                     }
-                    _ => Ty::handle(raw_ty.raw),
+                    _ => Ty::user_type(raw_ty.raw),
                 };
                 Ok(ty)
             }
@@ -1520,9 +1884,21 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_ident(&mut self) -> ParseResult<Ident> {
-        self.span_and_trace("parse_ident", |parser| match parser.next_token()?.0 {
-            Token::Identifier(ident) => Ok(Ident::new(ident)),
-            _ => Err(SyntaxError::new("expected identifier", parser.position()).into()),
+        self.span_and_trace("parse_ident", |parser| {
+            let (token, span) = parser.next_token()?;
+            match token {
+                Token::Identifier(ident) => Ok(Ident::new(ident)),
+                Token::Keyword(keyword) => Err(SyntaxError::new(
+                    format!("expected identifier, found keyword '{}'", keyword.as_str()),
+                    span.start_pos(),
+                )
+                .into()),
+                other => Err(SyntaxError::new(
+                    format!("expected identifier, found {}", other),
+                    span.start_pos(),
+                )
+                .into()),
+            }
         })
     }
 
@@ -1792,6 +2168,23 @@ impl<'a> Parser<'a> {
         consumed
     }
 
+    fn peek_op_decl_kind(&self) -> Option<OpKind> {
+        let kind = op_decl_kind_from_token(self.peek_token())?;
+        let mut idx = self.idx + 1;
+        while let Some((token, _)) = self.tokens.get(idx) {
+            if *token == Token::Space {
+                idx += 1;
+                continue;
+            }
+            return if *token == Token::Keyword(Keyword::Operator) {
+                Some(kind)
+            } else {
+                None
+            };
+        }
+        None
+    }
+
     fn expect(&mut self, token: Token, msg: &str) -> ParseResult<(Token, SourceSpan)> {
         let next = self.peek_token();
         if next == &token {
@@ -1819,11 +2212,23 @@ impl<'a> Parser<'a> {
 fn is_type(t: &Token) -> bool {
     t.is_identifier()
         || t == &Token::Ampersand
-        || matches!(t, Token::Keyword(k) if matches!(k, Keyword::Unit))
+        || matches!(t, Token::Keyword(k) if matches!(k, Keyword::Unit | Keyword::Type))
 }
 
 fn is_dim_expr(t: &Token) -> bool {
     t.is_identifier() || t.is_number() || t.is_operator() || matches!(t, Token::LDelim("("))
+}
+
+fn op_decl_kind_from_token(token: &Token) -> Option<OpKind> {
+    match token {
+        Token::Identifier(ident) => match ident.as_str() {
+            "prefix" => Some(OpKind::Prefix),
+            "postfix" => Some(OpKind::Postfix),
+            "infix" => Some(OpKind::Infix),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn is_prefix_op(op: &Token, ctx: &rt::Module) -> bool {

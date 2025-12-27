@@ -1,0 +1,77 @@
+INCLUDE: prelude.ch
+SWISSPATH: ${FILE_DIR}/../
+
+SETUP: {
+  import encoding::json
+}
+
+TEST: Encode json null
+INPUT: json::encode(())
+EXPECT: "null"
+
+TEST: Encode json bool
+INPUT: json::encode(true)
+EXPECT: "true"
+
+TEST: Encode json int
+INPUT: json::encode(42)
+EXPECT: "42"
+
+TEST: Encode json float
+INPUT: json::encode(3.5)
+EXPECT: "3.5"
+
+TEST: Encode json string
+INPUT: json::encode("hi")
+EXPECT: "\"hi\""
+
+TEST: Encode json list
+INPUT: json::encode([1, "a", false])
+EXPECT: "[1,\"a\",false]"
+
+TEST: Encode json tuple
+INPUT: json::encode((1, 2))
+EXPECT: "[1,2]"
+
+TEST: Encode json object
+INPUT: json::encode({"a": 1})
+EXPECT: "{\"a\":1}"
+
+TEST: Encode json dimensioned quantity error
+INPUT: json::encode(1m)
+EXPECT_ERROR: Exception: cannot encode dimensioned quantity to json
+
+TEST: Encode json unsupported type error
+INPUT: {
+  fn f() { 1 }
+  json::encode(f)
+}
+EXPECT_ERROR: Exception: cannot encode value of type 'fn' to json
+
+TEST: Decode json null
+INPUT: json::decode("null")
+EXPECT: ()
+
+TEST: Decode json bool
+INPUT: json::decode("false")
+EXPECT: false
+
+TEST: Decode json string
+INPUT: json::decode("\"hi\"")
+EXPECT: "hi"
+
+TEST: Decode json int
+INPUT: json::decode("42")
+EXPECT: 42
+
+TEST: Decode json float
+INPUT: json::decode("3.5")
+EXPECT: 3.5
+
+TEST: Decode json array
+INPUT: json::decode("[1,\"a\",true]")
+EXPECT: [1, "a", true]
+
+TEST: Decode json object
+INPUT: json::decode("{\"a\":1}")
+EXPECT: {"a": 1}

@@ -1,4 +1,5 @@
 use crate::print::{DisplayString, PrettyString};
+use crate::source::{SourceSpan, Spanned};
 use ustr::Ustr;
 
 pub(super) use super::context::Context;
@@ -6,9 +7,10 @@ pub(super) use super::exception::Exception;
 pub(super) use super::module::Module;
 pub(super) use super::name::{Function, Param};
 pub(super) use super::value::{
-    CastFrom, CastInto, Dim, Float, Integer, Number, Numeric, Quantity, Ty, VRef, Value, ValueRef,
+    CastFrom, CastInto, Dim, Float, Integer, IterValue, Number, Numeric, Quantity, Ty, Tuple,
+    VRef, Value, ValueRef,
 };
-pub(super) use super::{Conversion, IoHandle, ModuleId};
+pub(super) use super::{Conversion, IoHandle, ModuleId, UserTy};
 
 #[rustfmt::skip]
 macro_rules! builtin_ty_v2 {
@@ -22,8 +24,9 @@ macro_rules! builtin_ty_v2 {
     (str) => { crate::runtime::Ty::Str };
     (bool) => { crate::runtime::Ty::Bool };
     (fn) => { crate::runtime::Ty::Function };
-    (io) => { crate::runtime::Ty::Handle(ustr::Ustr::from("io")) };
-    (file) => { crate::runtime::Ty::Handle(ustr::Ustr::from("file")) };
+    (iter) => { crate::runtime::Ty::Iter };
+    (io) => { crate::runtime::Ty::UserType(ustr::Ustr::from("io")) };
+    (file) => { crate::runtime::Ty::UserType(ustr::Ustr::from("file")) };
     (list) => { crate::runtime::Ty::List };
     (tuple[$($t:ident),*]) => { crate::runtime::Ty::Tuple(vec![$(builtin_ty_v2!($t)),*]) };
     (unit) => { crate::runtime::Ty::Unit };
@@ -42,6 +45,7 @@ macro_rules! builtin_type_v2 {
     (str) => { String };
     (bool) => { bool };
     (fn) => { crate::runtime::Function };
+    (iter) => { crate::runtime::Value };
     (io) => { crate::runtime::IoHandle };
     (file) => { crate::runtime::FileHandle };
     (unit) => { ustr::Ustr };
@@ -117,7 +121,7 @@ macro_rules! builtin_fn_v2 {
         if let Some([< $p _ref >]) = [< $p _ref_opt >] {
             let mut $p = crate::runtime::CastInto::<builtin_type_v2!($t)>::cast($ctx, [< $p _ref >].borrow().clone())?;
             $res = $f($ctx, $($acc)* Some(&mut $p))?;
-            [< $p _ref >].set($p.into());
+            [< $p _ref >].set($ctx, $p.into())?;
         } else {
             $res = $f($ctx, $($acc)* None)?;
         }
@@ -132,7 +136,7 @@ macro_rules! builtin_fn_v2 {
         let [< $p _ref >] = crate::runtime::builtin::take_arg::<crate::runtime::ValueRef>($ctx, stringify!($p), $args)?;
         let mut $p = crate::runtime::CastInto::<builtin_type_v2!($t)>::cast($ctx, [< $p _ref >].borrow().clone())?;
         $res = $f($ctx, $($acc)* &mut $p)?;
-        [<$p _ref>].set($p.into());
+        [<$p _ref>].set($ctx, $p.into())?;
         $($deferred)*
     }};
     (__invoke ($($deferred:tt)*) $res:ident $f:ident ($ctx:ident, $args:expr, $($acc:tt)*) $p:ident : $t:ident | $($rest:tt)*) => {
@@ -143,13 +147,13 @@ macro_rules! builtin_fn_v2 {
     (__invoke ($($deferred:tt)*) $res:ident $f:ident ($ctx:ident, $args:expr, $($acc:tt)*) $p:ident : & $t:ident, $($rest:tt)*) => {paste::paste!{
         let [< $p _ref >] = crate::runtime::builtin::take_arg::<crate::runtime::ValueRef>($ctx, stringify!($p), $args)?;
         let mut $p = crate::runtime::CastInto::<builtin_type_v2!($t)>::cast($ctx, [< $p _ref >].borrow().clone())?;
-        builtin_fn_v2!(__invoke ($($deferred)* [<$p _ref>].set($p.into());) $res $f ($ctx, $args, $($acc)* &mut $p,) $($rest)*)
+        builtin_fn_v2!(__invoke ($($deferred)* [<$p _ref>].set($ctx, $p.into())?;) $res $f ($ctx, $args, $($acc)* &mut $p,) $($rest)*)
     }};
     (__invoke ($($deferred:tt)*) $res:ident $f:ident ($ctx:ident, $args:expr, $($acc:tt)*) $p:ident : & $t:ident ?, $($rest:tt)*) => {paste::paste!{
         let [< $p _ref_opt >] = crate::runtime::builtin::take_optional_arg::<crate::runtime::ValueRef>($ctx, stringify!($p), $args)?;
         if let Some([< $p _ref >]) = [< $p _ref_opt >] {
             let mut $p = crate::runtime::CastInto::<builtin_type_v2!($t)>::cast($ctx, [< $p _ref >].borrow().clone())?;
-            builtin_fn_v2!(__invoke ($($deferred)* [<$p _ref>].set($p.into());) $res $f ($ctx, $args, $($acc)* Some(&mut $p),) $($rest)*)
+            builtin_fn_v2!(__invoke ($($deferred)* [<$p _ref>].set($ctx, $p.into())?;) $res $f ($ctx, $args, $($acc)* Some(&mut $p),) $($rest)*)
         } else {
             builtin_fn_v2!(__invoke ($($deferred)*) $res $f ($ctx, $args, $($acc)* None,) $($rest)*)
         }
@@ -169,6 +173,16 @@ macro_rules! builtin_fn_v2 {
             let f = builtin_fn_v2!(__closure ($ctx: &mut crate::runtime::Context, ) $($rest)*);
             let result: _;
             builtin_fn_v2!(__invoke () result f (ctx, &mut args,) $($rest)*);
+            Ok(crate::runtime::Value::from(result))
+        })
+    }};
+
+    ($name:tt, |&$ctx:ident| $body:block) => {{
+        let params = Vec::new();
+        crate::runtime::Function::builtin($name, params, |ctx, _args| {
+            let f = |$ctx: &mut crate::runtime::Context| -> Result<_, Exception> { $body };
+            let result: _;
+            result = f(ctx)?;
             Ok(crate::runtime::Value::from(result))
         })
     }};
@@ -205,7 +219,8 @@ macro_rules! builtin_interface {
                 Spanned::new(stringify!($fn_name).into(), SourceSpan::default()),
                 vec![$(Param::from((format!("_{}", stringify!($param_ty)).into(), Some(builtin_ty_v2!($param_ty))))),*],
                 FunctionKind::Native(|_, _| unreachable!("interface function should not be called")),
-                None
+                None,
+                false
             ),
         ] $($rest)*)
     };
@@ -216,7 +231,8 @@ macro_rules! builtin_interface {
                 Spanned::new(stringify!($fn_name).into(), SourceSpan::default()),
                 vec![$(Param::from((format!("_{}", stringify!($param_ty)).into(), Some(builtin_ty_v2!($param_ty))))),*],
                 FunctionKind::Native(|_, _| unreachable!("interface function should not be called")),
-                None
+                None,
+                false
             ),
         ] $($rest)*)
     };
@@ -227,7 +243,8 @@ macro_rules! builtin_interface {
                 Spanned::new(stringify!($fn_name).into(), SourceSpan::default()),
                 vec![$(Param::from((format!("_{}", stringify!($param_ty)).into(), Some(builtin_ty_v2!($param_ty))))),*],
                 FunctionKind::Native(|_, _| unreachable!("interface function should not be called")),
-                None
+                None,
+                false
             ),
         ] $($rest)*)
     };
@@ -238,7 +255,8 @@ macro_rules! builtin_interface {
                 Spanned::new(stringify!($fn_name).into(), SourceSpan::default()),
                 vec![$(Param::from((format!("_{}", stringify!($param_ty)).into(), Some(builtin_ty_v2!($param_ty))))),*],
                 FunctionKind::Native(|_, _| unreachable!("interface function should not be called")),
-                None
+                None,
+                false
             ),
         ] $($rest)*)
     };
@@ -265,10 +283,12 @@ macro_rules! builtin_interface {
 
 mod collections;
 mod encoding;
+mod env;
+mod fs;
 mod io;
 mod math;
 mod operators;
-mod os;
+mod text;
 mod units;
 
 pub type NativeFn = fn(&mut Context, Vec<Value>) -> Result<Value, Exception>;
@@ -313,11 +333,14 @@ pub fn register_builtin_module(ctx: &mut Context) {
     ctx.modules
         .new_module("builtin")
         .unwrap()
+        .with_type("io")
+        .with_type("file")
         .with_function(builtin_fn_v2!("dir", |&ctx, v: any?| {
             let mut names: Vec<String> = Vec::new();
 
             let mut collect_module_names = |module: &Module, include_opened: bool| {
                 names.extend(module.names.iter_names().map(|name| name.to_string()));
+                names.extend(module.types.keys().map(|name| name.to_string()));
                 names.extend(
                     module
                         .module_aliases
@@ -336,6 +359,12 @@ pub fn register_builtin_module(ctx: &mut Context) {
                             ctx.modules[*module_id]
                                 .names
                                 .iter_names()
+                                .map(|name| name.to_string()),
+                        );
+                        names.extend(
+                            ctx.modules[*module_id]
+                                .types
+                                .keys()
                                 .map(|name| name.to_string()),
                         );
                     }
@@ -367,20 +396,27 @@ pub fn register_builtin_module(ctx: &mut Context) {
             };
 
             match value {
-                Value::Handle(handle) => {
-                    if handle.tag() == Ustr::from("module") {
-                        let module_id = handle.borrow::<ModuleId>(Ustr::from("module"), ctx)?;
-                        let module = &ctx.modules[*module_id];
-                        collect_module_names(module, false);
-                    } else {
-                        names.extend(
-                            ctx.handle_methods
-                                .names_for(handle.tag())
-                                .into_iter()
-                                .map(|name| name.to_string()),
-                        );
+                Value::UserType(user_ty) => match user_ty {
+                    UserTy::Handle(handle) => {
+                        if handle.tag() == Ustr::from("module") {
+                            let module_id =
+                                handle.borrow::<ModuleId>(Ustr::from("module"), ctx)?;
+                            let module = &ctx.modules[*module_id];
+                            collect_module_names(module, false);
+                        } else if let Some(module) = ctx.active_module() {
+                            if let Ok(ty) = ctx.modules.resolve_type_in(
+                                module.id,
+                                Spanned::new(handle.tag(), SourceSpan::default()),
+                            ) {
+                                names.extend(
+                                    ty.method_names()
+                                        .into_iter()
+                                        .map(|name| name.to_string()),
+                                );
+                            }
+                        }
                     }
-                }
+                },
                 _ => {}
             }
 
@@ -389,18 +425,152 @@ pub fn register_builtin_module(ctx: &mut Context) {
             let values = names.into_iter().map(Value::String).collect();
             Ok(Value::list(values))
         }))
-        .with_function(builtin_fn_v2!("typeof", |&ctx, v: any| Ok(v
-            .ty()
-            .to_string())))
+        .with_function(builtin_fn_v2!("typeof", |&ctx, v: any| {
+            let value = match v {
+                Value::Ref(r) => r.borrow().clone(),
+                other => other,
+            };
+            let name = match value {
+                Value::Ty(ty) => ty.to_string(),
+                other => other.ty().to_string(),
+            };
+            Ok(name)
+        }))
+        .with_function(builtin_fn_v2!("bool_new", |&_ctx| {
+            Ok(Value::Boolean(false))
+        }))
+        .with_function(builtin_fn_v2!("int_new", |&_ctx| {
+            Ok(Value::from(Quantity::from(Number::from(Integer::from(0)))))
+        }))
+        .with_function(builtin_fn_v2!("float_new", |&ctx| {
+            Ok(Value::from(Quantity::from(Number::from(Float::with_val(
+                ctx.config.float_precision,
+                0,
+            )))))
+        }))
+        .with_function(builtin_fn_v2!("str_new", |&_ctx| {
+            Ok(Value::String(String::new()))
+        }))
+        .with_function(builtin_fn_v2!("iter_new", |&ctx, v: iter| {
+            let iter = v.try_into_iter(ctx)?;
+            Ok(Value::Iter(IterValue::new(iter)))
+        }))
+        .with_function(builtin_fn_v2!("list_new", |&ctx, v: iter| {
+            let mut iter = v.try_into_iter(ctx)?;
+            let mut items = Vec::new();
+            while let Some(value) = iter.next(ctx)? {
+                items.push(value);
+            }
+            Ok(Value::list(items))
+        }))
+        .with_function(builtin_fn_v2!("tuple_new", |&ctx, v: iter| {
+            let mut iter = v.try_into_iter(ctx)?;
+            let mut items = Vec::new();
+            while let Some(value) = iter.next(ctx)? {
+                items.push(value);
+            }
+            let boxed = items.into_iter().map(Box::new).collect();
+            Ok(Value::Tuple(Tuple::new(smallvec::SmallVec::from_vec(
+                boxed,
+            ))))
+        }))
+        .with_function(builtin_fn_v2!("object_new", |&ctx, v: iter| {
+            let mut iter = v.try_into_iter(ctx)?;
+            let mut items = Vec::new();
+            while let Some(value) = iter.next(ctx)? {
+                let value = match value {
+                    Value::Ref(r) => r.borrow().clone(),
+                    other => other,
+                };
+                let tuple = match value {
+                    Value::Tuple(items) => items,
+                    other => {
+                        return Err(Exception::new(
+                            "TypeError",
+                            format!(
+                                "object expects tuples of (key, value), found {}",
+                                other.ty().pretty_string(ctx)
+                            ),
+                        )
+                        .with_backtrace(ctx.backtrace()))
+                    }
+                };
+                if tuple.len() != 2 {
+                    return Err(Exception::new(
+                        "TypeError",
+                        "object expects tuples of (key, value)".to_string(),
+                    )
+                    .with_backtrace(ctx.backtrace()));
+                }
+                let key_value = tuple.get(0).expect("tuple length checked");
+                let key = match &**key_value {
+                    Value::String(s) => s.clone(),
+                    Value::Ref(r) => match r.borrow().clone() {
+                        Value::String(s) => s,
+                        other => {
+                            return Err(Exception::new(
+                                "TypeError",
+                                format!(
+                                    "object keys must be strings, found {}",
+                                    other.ty().pretty_string(ctx)
+                                ),
+                            )
+                            .with_backtrace(ctx.backtrace()))
+                        }
+                    },
+                    other => {
+                        return Err(Exception::new(
+                            "TypeError",
+                            format!(
+                                "object keys must be strings, found {}",
+                                other.ty().pretty_string(ctx)
+                            ),
+                        )
+                        .with_backtrace(ctx.backtrace()))
+                    }
+                };
+                let value = tuple.get(1).expect("tuple length checked");
+                items.push((Ustr::from(key.as_str()), value.as_ref().clone()));
+            }
+            Ok(Value::object(items))
+        }))
+        .with_function(builtin_fn_v2!("unit_new", |&ctx, name: str| {
+            let module_id = ctx
+                .active_module()
+                .map(|module| module.id)
+                .ok_or_else(|| {
+                    Exception::new("RuntimeError", "no active module".to_string())
+                        .with_backtrace(ctx.backtrace())
+                })?;
+            let unit = ctx
+                .modules
+                .resolve_unit_suffix_in(
+                    module_id,
+                    Spanned::new(Ustr::from(name.as_str()), SourceSpan::default()),
+                )
+                .map_err(|_| {
+                    Exception::new("NameError", format!("unknown unit: {}", name))
+                        .with_backtrace(ctx.backtrace())
+                })?;
+            Ok(Value::Unit(unit.name.raw))
+        }))
         .with_function(builtin_fn_v2!("to_string", |&ctx, v: any| {
             Ok(v.plain_string(ctx))
+        }))
+        .with_function(builtin_fn_v2!("error", |&ctx, msg: str?| {
+            let message = msg.unwrap_or_default();
+            Err::<Value, Exception>(
+                Exception::new("Error", message).with_backtrace(ctx.backtrace()),
+            )
         }));
 
     collections::register(ctx);
     encoding::register(ctx);
+    env::register(ctx);
+    fs::register(ctx);
     io::register(ctx);
     math::register(ctx);
     operators::register(ctx);
-    os::register(ctx);
+    text::register(ctx);
     units::register(ctx);
 }

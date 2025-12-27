@@ -1,0 +1,83 @@
+INCLUDE: prelude.ch
+WORKDIR: ${TEST_TMP}
+SWISSPATH: ${FILE_DIR}/../
+
+SETUP: {
+  import text
+}
+
+TEST: trim removes leading and trailing whitespace
+INPUT: text::trim("  hi \t")
+EXPECT: "hi"
+
+TEST: trim_start removes leading whitespace
+INPUT: text::trim_start("  hi ")
+EXPECT: "hi "
+
+TEST: trim_end removes trailing whitespace
+INPUT: text::trim_end(" hi  ")
+EXPECT: " hi"
+
+TEST: lower converts to lowercase
+INPUT: text::lower("AbC")
+EXPECT: "abc"
+
+TEST: upper converts to uppercase
+INPUT: text::upper("AbC")
+EXPECT: "ABC"
+
+TEST: starts_with checks prefix
+INPUT: text::starts_with("hello", "he")
+EXPECT: true
+
+TEST: ends_with checks suffix
+INPUT: text::ends_with("hello", "lo")
+EXPECT: true
+
+TEST: contains checks substring
+INPUT: text::contains("hello", "ell")
+EXPECT: true
+
+TEST: replace replaces substrings
+INPUT: text::replace("a-b-c", "-", ":")
+EXPECT: "a:b:c"
+
+TEST: split defaults to whitespace
+INPUT: text::split("a  b\tc\n", ())
+EXPECT: ["a", "b", "c"]
+
+TEST: split with separator
+INPUT: text::split("a,b,c", ",")
+EXPECT: ["a", "b", "c"]
+
+TEST: split empty separator raises
+INPUT: text::split("abc", "")
+EXPECT_ERROR: Exception: separator cannot be empty
+
+TEST: join concatenates strings
+INPUT: text::join(["a", "b", "c"], ",")
+EXPECT: "a,b,c"
+
+TEST: join rejects non-strings
+INPUT: text::join(["a", 1], ",")
+EXPECT_ERROR: Exception: join expects string elements
+
+TEST: lines splits lines without trailing empty
+INPUT: text::lines("a\nb\n")
+EXPECT: ["a", "b"]
+
+TEST: strip_prefix removes prefix when present
+INPUT: text::strip_prefix("foobar", "foo")
+EXPECT: "bar"
+
+TEST: strip_prefix returns original if missing
+INPUT: text::strip_prefix("foobar", "baz")
+EXPECT: "foobar"
+
+TEST: strip_suffix removes suffix when present
+INPUT: text::strip_suffix("foobar", "bar")
+EXPECT: "foo"
+
+TEST: strip_suffix returns original if missing
+INPUT: text::strip_suffix("foobar", "baz")
+EXPECT: "foobar"

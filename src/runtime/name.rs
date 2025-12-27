@@ -6,6 +6,8 @@ use super::value::{Ty, Value, ValueRef};
 use super::{DeclError, TypeError};
 
 use crate::ast::{Expr, Ident, ListNode, Stmt};
+use crate::id::{function_id, FunctionId};
+use crate::runtime::ModuleId;
 use crate::print::ansi::{
     chars::{ARROW, COLON, COMMA, EQUALS, LBRAC, LPARN, RBRAC, RPARN},
     ATTR, BOLD, DIMENSION, DIRECTIVE, IDENT, KEYWORD, KIND, NUMBER, OPERATOR, PUNCT, RESET, STRING,
@@ -54,10 +56,13 @@ impl PrettyPrint<Context> for Constant {
 /// A registered function.
 #[derive(Clone, Debug)]
 pub struct Function {
+    pub id: FunctionId,
+    pub module_id: Option<ModuleId>,
     pub name: Spanned<Ustr>,
     pub params: Vec<Param>,
     pub kind: FunctionKind,
     pub ret: Option<Spanned<Ty>>,
+    pub ret_optional: bool,
 }
 
 impl Function {
@@ -66,30 +71,57 @@ impl Function {
         params: Vec<Param>,
         kind: FunctionKind,
         ret: Option<Spanned<Ty>>,
+        ret_optional: bool,
     ) -> Self {
         Self {
+            id: function_id::next(),
+            module_id: None,
             name,
             params,
             kind,
             ret,
+            ret_optional,
         }
     }
 
     pub fn builtin(name: &str, params: Vec<Param>, func: NativeFn) -> Self {
         Self {
+            id: function_id::next(),
+            module_id: None,
             name: Spanned::new(Ustr::from(name), SourceSpan::default()),
             params,
             kind: FunctionKind::Native(func),
             ret: None,
+            ret_optional: false,
         }
     }
 
     pub fn source(name: Spanned<Ustr>, params: Vec<Param>, body: ListNode<Stmt>) -> Self {
         Self {
+            id: function_id::next(),
+            module_id: None,
             name,
             params,
             kind: FunctionKind::Source(body),
             ret: None,
+            ret_optional: false,
+        }
+    }
+
+    pub fn lambda(
+        name: Spanned<Ustr>,
+        params: Vec<Param>,
+        body: ListNode<Stmt>,
+        captures: Vec<(Ustr, ValueRef)>,
+    ) -> Self {
+        Self {
+            id: function_id::next(),
+            module_id: None,
+            name,
+            params,
+            kind: FunctionKind::Lambda { body, captures },
+            ret: None,
+            ret_optional: false,
         }
     }
 
@@ -106,6 +138,10 @@ impl Function {
         } else {
             format!("{}@{}[{}]", self.name.raw, self.params.len(), arg_types)
         }
+    }
+
+    pub fn unique_id(&self) -> FunctionId {
+        self.id
     }
 
     /// Checks whether another function is compatible as an overload of this function.
@@ -159,6 +195,7 @@ impl PrettyPrint<Context> for Function {
         match &self.kind {
             FunctionKind::Native(_) => write!(out, "{KIND}native{RESET}"),
             FunctionKind::Source(_) => write!(out, "{KIND}source{RESET}"),
+            FunctionKind::Lambda { .. } => write!(out, "{KIND}lambda{RESET}"),
             FunctionKind::BuiltinWrapper { .. } => write!(out, "{KIND}builtin_wrapper{RESET}"),
         }
     }
@@ -168,6 +205,10 @@ impl PrettyPrint<Context> for Function {
 pub enum FunctionKind {
     Native(NativeFn),
     Source(ListNode<Stmt>),
+    Lambda {
+        body: ListNode<Stmt>,
+        captures: Vec<(Ustr, ValueRef)>,
+    },
     BuiltinWrapper {
         target_name: Spanned<Ustr>,
         target_params: Vec<Param>,
@@ -181,6 +222,7 @@ impl Debug for FunctionKind {
         match self {
             Self::Native(arg0) => f.write_str("Native"),
             Self::Source(arg0) => f.write_str("Source"),
+            Self::Lambda { .. } => f.write_str("Lambda"),
             Self::BuiltinWrapper { .. } => f.write_str("BuiltinWrapper"),
         }
     }
@@ -303,7 +345,7 @@ impl Name {
     }
 
     pub fn function(name: Spanned<Ustr>, params: Vec<Param>, kind: FunctionKind) -> Self {
-        Name::Function(Function::new(name, params, kind, None))
+        Name::Function(Function::new(name, params, kind, None, false))
     }
 
     pub fn kind(&self) -> &str {

@@ -35,6 +35,9 @@ pub trait Visitor<'a, S: Default, E>: Sized {
     fn visit_fn_decl(&mut self, decl: &mut FnDecl) -> Result<S, E> {
         decl.walk(self)
     }
+    fn visit_type_decl(&mut self, decl: &mut TypeDecl) -> Result<S, E> {
+        decl.walk(self)
+    }
     fn visit_module_decl(&mut self, decl: &mut ModuleDecl) -> Result<S, E> {
         decl.walk(self)
     }
@@ -179,6 +182,7 @@ impl Visit for Item {
             ItemKind::OpDecl(decl) => decl.visit(visitor),
             ItemKind::ConstDecl(decl) => decl.visit(visitor),
             ItemKind::FnDecl(decl) => decl.visit(visitor),
+            ItemKind::TypeDecl(decl) => decl.visit(visitor),
             ItemKind::ModuleDecl(decl) => decl.visit(visitor),
             ItemKind::Expr(expr) => visitor.visit_top_level_expr(expr),
         }
@@ -249,6 +253,17 @@ impl Visit for ConstDecl {
 impl Visit for FnDecl {
     fn visit<'a, V: Visitor<'a, S, E>, S: Default, E>(&mut self, visitor: &mut V) -> Result<S, E> {
         visitor.visit_fn_decl(self)
+    }
+
+    fn walk<'a, V: Visitor<'a, S, E>, S: Default, E>(&mut self, visitor: &mut V) -> Result<S, E> {
+        self.receiver.visit(visitor)?;
+        Ok(S::default())
+    }
+}
+
+impl Visit for TypeDecl {
+    fn visit<'a, V: Visitor<'a, S, E>, S: Default, E>(&mut self, visitor: &mut V) -> Result<S, E> {
+        visitor.visit_type_decl(self)
     }
 
     fn walk<'a, V: Visitor<'a, S, E>, S: Default, E>(&mut self, visitor: &mut V) -> Result<S, E> {
@@ -383,6 +398,22 @@ impl Visit for Expr {
                     else_.visit(visitor)?;
                 }
             }
+            ExprKind::Try(try_expr) => {
+                match &mut try_expr.body {
+                    TryBody::Expr(expr) => {
+                        expr.visit(visitor)?;
+                    }
+                    TryBody::Block(body) => {
+                        body.visit(visitor)?;
+                    }
+                }
+                if let Some(catch) = &mut try_expr.catch {
+                    if let Some(binding) = &mut catch.binding {
+                        binding.visit(visitor)?;
+                    }
+                    catch.body.visit(visitor)?;
+                }
+            }
             ExprKind::ForRange(pat, iter, body) => {
                 todo!()
                 // pat.visit(visitor)?;
@@ -392,6 +423,19 @@ impl Visit for Expr {
             ExprKind::FnCall(func, args) => {
                 func.visit(visitor)?;
                 args.visit(visitor)?;
+            }
+            ExprKind::Lambda(lambda) => {
+                for param in lambda.params.iter_mut() {
+                    param.visit(visitor)?;
+                }
+                match &mut lambda.body {
+                    LambdaBody::Expr(expr) => {
+                        expr.visit(visitor)?;
+                    }
+                    LambdaBody::Block(body) => {
+                        body.visit(visitor)?;
+                    }
+                }
             }
             ExprKind::Splat(expr) => {
                 expr.visit(visitor)?;

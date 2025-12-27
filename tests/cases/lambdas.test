@@ -1,0 +1,107 @@
+INCLUDE: prelude.ch
+
+TEST: Lambda expression body
+INPUT: {
+  inc = x => x + 1
+  inc(3)
+}
+EXPECT: 4
+
+TEST: Lambda block body
+INPUT: {
+  add = (x, y) => {
+    sum = x + y
+    sum + 1
+  }
+  add(2, 3)
+}
+EXPECT: 6
+
+TEST: Lambda with no params
+INPUT: {
+  get = () => 5
+  get()
+}
+EXPECT: 5
+
+TEST: Lambda param annotations
+INPUT: {
+  add = (x: num, y: num) => x + y
+  add(2, 3)
+}
+EXPECT: 5
+
+TEST: Lambda param annotation type error
+INPUT: {
+  keep = (x: num) => x
+  keep("nope")
+}
+EXPECT_ERROR: TypeError: expected 'num', found 'str'
+
+TEST: Lambda param annotation converts unit
+INPUT: {
+  keep_rad = (x: [rad]) => x
+  keep_rad(180deg)
+}
+EXPECT: 3.141592653589793 rad
+
+TEST: Lambda capture by reference reads updates
+INPUT: {
+  x = 1
+  f = () => x
+  x = 5
+  f()
+}
+EXPECT: 5
+
+TEST: Lambda capture by reference mutates outer
+INPUT: {
+  x = 1
+  bump = () => { x = x + 1 }
+  bump()
+  bump()
+  x
+}
+EXPECT: 3
+
+TEST: Lambda capture by reference to list
+INPUT: {
+  xs = [1, 2]
+  push = v => { append(xs, v) }
+  push(3)
+  xs
+}
+EXPECT: [1, 2, 3]
+
+TEST: Lambda escapes scope with captured state
+INPUT: {
+  fn make_counter(start) {
+    x = start
+    () => {
+      x = x + 1
+      x
+    }
+  }
+  counter = make_counter(5)
+  (counter(), counter(), counter())
+}
+EXPECT: (6, 7, 8)
+
+TEST: Lambda param shadows outer
+INPUT: {
+  x = 10
+  f = x => x + 1
+  f(1) + x
+}
+EXPECT: 12
+
+TEST: Lambda locals do not leak
+INPUT: {
+  f = () => {
+    y = 2
+    y
+  }
+  f()
+  y
+}
+EXPECT_ERROR: NameError: undefined 'y'

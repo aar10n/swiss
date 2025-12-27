@@ -1,0 +1,156 @@
+INCLUDE: prelude.ch
+WORKDIR: ${TEST_TMP}
+SWISSPATH: ${FILE_DIR}/../
+
+SETUP: {
+  import fs
+  fs::mkdir("tmp", false)
+  f = fs::open("hello.txt", "w")
+  f.writeln("Hello, world!")
+  f.close()
+}
+
+TEST: cwd returns string
+INPUT: builtin::typeof(fs::cwd())
+EXPECT: "str"
+
+TEST: listdir defaults to cwd
+INPUT: builtin::typeof(fs::listdir())
+EXPECT: "list"
+
+TEST: listdir empty tmp
+INPUT: fs::listdir("tmp")
+EXPECT: []
+
+TEST: listdir single entry
+INPUT: {
+  fs::mkdir("tmp/child", false)
+  fs::listdir("tmp")
+}
+EXPECT: ["child"]
+
+TEST: exists reports missing and present paths
+INPUT: [fs::exists("tmp"), fs::exists("tmp/missing")]
+EXPECT: [true, false]
+
+TEST: mkdir returns false for existing dir
+INPUT: fs::mkdir("tmp", false)
+EXPECT: false
+
+TEST: mkdir recursive creates nested dirs
+INPUT: {
+  created = fs::mkdir("tmp/parent/child", true)
+  [created, fs::exists("tmp/parent"), fs::exists("tmp/parent/child")]
+}
+EXPECT: [true, true, true]
+
+TEST: remove deletes directory
+INPUT: {
+  fs::mkdir("tmp/child", false)
+  fs::remove("tmp/child")
+  fs::exists("tmp/child")
+}
+EXPECT: false
+
+TEST: open missing file error
+INPUT: fs::open("tmp/missing.txt")
+EXPECT_ERROR: Exception: No such file or directory (os error 2)
+
+TEST: open and read_all returns file contents
+INPUT: fs::open("hello.txt").read_all()
+EXPECT: "Hello, world!\n"
+
+TEST: file is_open reports status
+INPUT: {
+  f = fs::open("hello.txt")
+  open_before = f.is_open()
+  f.close()
+  open_after = f.is_open()
+  [open_before, open_after]
+}
+EXPECT: [true, false]
+
+TEST: write and writeln write contents
+INPUT: {
+  f = fs::open("tmp/out.txt", "w")
+  f.write("hello")
+  f.writeln(" world")
+  f.flush()
+  f.close()
+  fs::open("tmp/out.txt").read_all()
+}
+EXPECT: "hello world\n"
+
+TEST: open append appends to file
+INPUT: {
+  f = fs::open("tmp/append.txt", "w")
+  f.writeln("one")
+  f.close()
+  a = fs::open("tmp/append.txt", "a")
+  a.write("two")
+  a.close()
+  fs::open("tmp/append.txt").read_all()
+}
+EXPECT: "one\ntwo"
+
+TEST: open read write creates file and reads
+INPUT: {
+  f = fs::open("tmp/rw.txt", "r+")
+  f.write("abc")
+  f.close()
+  fs::open("tmp/rw.txt").read_all()
+}
+EXPECT: "abc"
+
+TEST: close is idempotent
+INPUT: {
+  f = fs::open("hello.txt")
+  f.close()
+  f.close()
+  "ok"
+}
+EXPECT: "ok"
+
+TEST: write after close raises
+INPUT: {
+  f = fs::open("tmp/closed.txt", "w")
+  f.close()
+  f.write("nope")
+}
+EXPECT_ERROR: Exception: file is closed
+
+TEST: read after close raises
+INPUT: {
+  f = fs::open("hello.txt")
+  f.close()
+  f.read_all()
+}
+EXPECT_ERROR: Exception: file is closed
+
+TEST: invalid mode raises
+INPUT: fs::open("hello.txt", "x")
+EXPECT_ERROR: Exception: invalid file mode 'x'
+
+TEST: path join
+INPUT: fs::path::join("a", "b")
+EXPECT: "a/b"
+
+TEST: path dirname
+INPUT: fs::path::dirname("a/b")
+EXPECT: "a"
+
+TEST: path basename
+INPUT: fs::path::basename("a/b")
+EXPECT: "b"
+
+TEST: path extname
+INPUT: [fs::path::extname("a/b.txt"), fs::path::extname("a/b")]
+EXPECT: ["txt", ""]
+
+TEST: path normalize
+INPUT: fs::path::normalize("a/./b/../c")
+EXPECT: "a/c"
+
+TEST: path is_abs
+INPUT: [fs::path::is_abs("/a/b"), fs::path::is_abs("a/b")]
+EXPECT: [true, false]

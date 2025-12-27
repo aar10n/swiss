@@ -43,3 +43,4 @@ unique_id_type!(pub NodeId);
 unique_id_type!(pub SourceId);
 unique_id_type!(pub ModuleId);
 unique_id_type!(pub VarId);
+unique_id_type!(pub FunctionId);

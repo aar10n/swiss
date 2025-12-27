@@ -31,8 +31,8 @@ impl Module {
 pub type Item = KindNode<ItemKind>;
 
 impl Item {
-    pub fn import(path: Path) -> Self {
-        Self::new(ItemKind::Import(path))
+    pub fn import(import: Import) -> Self {
+        Self::new(ItemKind::Import(import))
     }
 
     pub fn directive(directive: Directive) -> Self {
@@ -59,6 +59,10 @@ impl Item {
         Self::new(ItemKind::FnDecl(decl.into()))
     }
 
+    pub fn type_decl(decl: TypeDecl) -> Self {
+        Self::new(ItemKind::TypeDecl(decl.into()))
+    }
+
     pub fn module_decl(decl: ModuleDecl) -> Self {
         Self::new(ItemKind::ModuleDecl(decl.into()))
     }
@@ -70,15 +74,32 @@ impl Item {
 
 #[derive(Clone, Debug)]
 pub enum ItemKind {
-    Import(Path),
+    Import(Import),
     Directive(P<Directive>),
     DimDecl(P<DimDecl>),
     UnitDecl(P<UnitDecl>),
     OpDecl(P<OpDecl>),
     ConstDecl(P<ConstDecl>),
     FnDecl(P<FnDecl>),
+    TypeDecl(P<TypeDecl>),
     ModuleDecl(P<ModuleDecl>),
     Expr(P<Expr>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Import {
+    Path(Path),
+    Members { module: Path, members: Vec<Ident> },
+}
+
+impl Import {
+    pub fn path(path: Path) -> Self {
+        Self::Path(path)
+    }
+
+    pub fn members(module: Path, members: Vec<Ident>) -> Self {
+        Self::Members { module, members }
+    }
 }
 
 /// An interpreter directive.
@@ -124,6 +145,10 @@ impl Directive {
     pub fn builtin() -> Self {
         Self::new(DirectiveKind::Builtin)
     }
+
+    pub fn type_path(path: Path) -> Self {
+        Self::new(DirectiveKind::Type(path.into()))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -138,6 +163,7 @@ pub enum DirectiveKind {
     UnitPreference(UnitPreference),
     DefaultFormatter(Spanned<Ustr>),
     Builtin,
+    Type(P<Path>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -390,6 +416,7 @@ impl ConstDecl {
 pub struct FnDecl {
     id: NodeId,
     span: SourceSpan,
+    pub receiver: Option<Ty>,
     pub name: Ident,
     pub params: ListNode<Param>,
     pub body: ListNode<Stmt>,
@@ -407,11 +434,51 @@ impl FnDecl {
         Self {
             id: node_id::next(),
             span: SourceSpan::default(),
+            receiver: None,
             name,
             params,
             body,
             ret,
             is_builtin_wrapper: false,
+        }
+    }
+
+    pub fn with_receiver(
+        receiver: Ty,
+        name: Ident,
+        params: ListNode<Param>,
+        body: ListNode<Stmt>,
+        ret: Option<Either<DimExpr, Ty>>,
+    ) -> Self {
+        Self {
+            id: node_id::next(),
+            span: SourceSpan::default(),
+            receiver: Some(receiver),
+            name,
+            params,
+            body,
+            ret,
+            is_builtin_wrapper: false,
+        }
+    }
+}
+
+/// A type declaration.
+#[derive(Clone, Debug)]
+pub struct TypeDecl {
+    id: NodeId,
+    span: SourceSpan,
+    pub name: Ident,
+    pub target: Path,
+}
+
+impl TypeDecl {
+    pub fn new(name: Ident, target: Path) -> Self {
+        Self {
+            id: node_id::next(),
+            span: SourceSpan::default(),
+            name,
+            target,
         }
     }
 }
@@ -642,6 +709,54 @@ impl If {
 }
 
 #[derive(Clone, Debug)]
+pub struct TryExpr {
+    pub body: TryBody,
+    pub catch: Option<TryCatch>,
+}
+
+impl TryExpr {
+    pub fn new(body: TryBody, catch: Option<TryCatch>) -> Self {
+        Self { body, catch }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum TryBody {
+    Expr(P<Expr>),
+    Block(ListNode<Stmt>),
+}
+
+#[derive(Clone, Debug)]
+pub struct TryCatch {
+    pub binding: Option<Ident>,
+    pub body: ListNode<Stmt>,
+}
+
+impl TryCatch {
+    pub fn new(binding: Option<Ident>, body: ListNode<Stmt>) -> Self {
+        Self { binding, body }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct LambdaExpr {
+    pub params: Vec<Param>,
+    pub body: LambdaBody,
+}
+
+impl LambdaExpr {
+    pub fn new(params: Vec<Param>, body: LambdaBody) -> Self {
+        Self { params, body }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum LambdaBody {
+    Expr(P<Expr>),
+    Block(ListNode<Stmt>),
+}
+
+#[derive(Clone, Debug)]
 pub enum ExprKind {
     /// An assignment expresion.
     Assign(P<BindPat>, P<Expr>),
@@ -659,10 +774,14 @@ pub enum ExprKind {
     UnitCast(P<Expr>, Unit),
     /// An if expression.
     If(If),
+    /// A try expression.
+    Try(TryExpr),
     // A for-range expression.
     ForRange(P<BindPat>, P<Expr>, ListNode<Stmt>),
     /// A function call expression.
     FnCall(Path, ListNode<Expr>),
+    /// A lambda expression.
+    Lambda(LambdaExpr),
     /// A splat expression (...)
     Splat(P<Expr>),
 
@@ -731,12 +850,20 @@ impl Expr {
         Self::new(ExprKind::If(if_expr))
     }
 
+    pub fn try_expr(try_expr: TryExpr) -> Self {
+        Self::new(ExprKind::Try(try_expr))
+    }
+
     pub fn for_range(bind: BindPat, expr: Expr, body: ListNode<Stmt>) -> Self {
         Self::new(ExprKind::ForRange(bind.into(), expr.into(), body))
     }
 
     pub fn fn_call(path: Path, args: ListNode<Expr>) -> Self {
         Self::new(ExprKind::FnCall(path, args))
+    }
+
+    pub fn lambda(lambda: LambdaExpr) -> Self {
+        Self::new(ExprKind::Lambda(lambda))
     }
 
     pub fn splat(expr: Expr) -> Self {
@@ -849,14 +976,16 @@ pub enum TyKind {
     Str,
     Num,
     Function,
+    Iter,
     Io,
-    Handle(Ustr),
+    UserType(Ustr),
     Unit,
     Type,
     Object,
     List,
     Tuple(ListNode<Ty>),
     Ref(Box<Ty>),
+    Optional(Box<Ty>),
 }
 
 impl Ty {
@@ -888,12 +1017,16 @@ impl Ty {
         Self::new(TyKind::Function)
     }
 
+    pub fn iter() -> Self {
+        Self::new(TyKind::Iter)
+    }
+
     pub fn io() -> Self {
         Self::new(TyKind::Io)
     }
 
-    pub fn handle(name: Ustr) -> Self {
-        Self::new(TyKind::Handle(name))
+    pub fn user_type(name: Ustr) -> Self {
+        Self::new(TyKind::UserType(name))
     }
 
     pub fn list() -> Self {
@@ -919,10 +1052,14 @@ impl Ty {
     pub fn ref_(ty: Ty) -> Self {
         Self::new(TyKind::Ref(Box::new(ty)))
     }
+
+    pub fn optional(ty: Ty) -> Self {
+        Self::new(TyKind::Optional(Box::new(ty)))
+    }
 }
 
 /// A path is a multi-part identifier specifiying an item in a module.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Path {
     id: NodeId,
     span: SourceSpan,
@@ -1120,6 +1257,8 @@ impl_identifiable!(ConstDecl);
 impl_spannable!(ConstDecl);
 impl_identifiable!(FnDecl);
 impl_spannable!(FnDecl);
+impl_identifiable!(TypeDecl);
+impl_spannable!(TypeDecl);
 impl_identifiable!(ModuleDecl);
 impl_spannable!(ModuleDecl);
 impl_identifiable!(Param);

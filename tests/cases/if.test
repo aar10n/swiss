@@ -19,3 +19,53 @@ EXPECT: ()
 TEST: Else if with else
 INPUT: if 0 { 1 } else if 0 { 2 } else { 3 }
 EXPECT: 3
+
+// Truthy and falsy tests
+
+TEST: False is falsy
+INPUT: if false { 1 } else { 2 }
+EXPECT: 2
+
+TEST: True is truthy
+INPUT: if true { 1 } else { 2 }
+EXPECT: 1
+
+TEST: Empty string is falsy
+INPUT: if "" { 1 } else { 2 }
+EXPECT: 2
+
+TEST: Nonempty string is truthy
+INPUT: if "hi" { 1 } else { 2 }
+EXPECT: 1
+
+TEST: Empty list is falsy
+INPUT: if [] { 1 } else { 2 }
+EXPECT: 2
+
+TEST: Nonempty list is truthy
+INPUT: if [1] { 1 } else { 2 }
+EXPECT: 1
+
+TEST: Nonempty tuple is truthy
+INPUT: if (1, 2) { 1 } else { 2 }
+EXPECT: 1
+
+TEST: Empty object is falsy
+INPUT: if {} { 1 } else { 2 }
+EXPECT: 2
+
+TEST: Nonempty object is truthy
+INPUT: if {"a": 1} { 1 } else { 2 }
+EXPECT: 1
+
+TEST: Unit is falsy
+INPUT: if () { 1 } else { 2 }
+EXPECT: 2
+
+TEST: Zero quantity is falsy
+INPUT: if 0m { 1 } else { 2 }
+EXPECT: 2
+
+TEST: Nonzero quantity is truthy
+INPUT: if 1m { 1 } else { 2 }
+EXPECT: 1

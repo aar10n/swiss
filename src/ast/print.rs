@@ -75,9 +75,9 @@ impl PrettyPrint<Context> for Item {
         level: usize,
     ) -> io::Result<()> {
         match &self.kind {
-            ItemKind::Import(path) => {
+            ItemKind::Import(import) => {
                 write!(out, "{KIND}Import{RESET} ")?;
-                path.pretty_print(out, ctx, level)?;
+                import.pretty_print(out, ctx, level)?;
                 writeln!(out)
             }
             ItemKind::Directive(directive) => {
@@ -89,8 +89,33 @@ impl PrettyPrint<Context> for Item {
             ItemKind::OpDecl(decl) => decl.pretty_print(out, ctx, level),
             ItemKind::ConstDecl(decl) => decl.pretty_print(out, ctx, level),
             ItemKind::FnDecl(decl) => decl.pretty_print(out, ctx, level),
+            ItemKind::TypeDecl(decl) => decl.pretty_print(out, ctx, level),
             ItemKind::ModuleDecl(decl) => decl.pretty_print(out, ctx, level),
             ItemKind::Expr(expr) => expr.pretty_print(out, ctx, level),
+        }
+    }
+}
+
+impl PrettyPrint<Context> for Import {
+    fn pretty_print<Output: io::Write>(
+        &self,
+        out: &mut Output,
+        ctx: &Context,
+        level: usize,
+    ) -> io::Result<()> {
+        match self {
+            Import::Path(path) => path.pretty_print(out, ctx, level),
+            Import::Members { module, members } => {
+                module.pretty_print(out, ctx, level)?;
+                write!(out, "{PUNCT}::{RESET}{PUNCT}{{{RESET}")?;
+                for (i, member) in members.iter().enumerate() {
+                    if i > 0 {
+                        write!(out, "{COMMA} ")?;
+                    }
+                    member.pretty_print(out, ctx, level)?;
+                }
+                write!(out, "{PUNCT}}}{RESET}")
+            }
         }
     }
 }
@@ -174,6 +199,10 @@ impl PrettyPrint<Context> for Directive {
                 name.raw
             ),
             DirectiveKind::Builtin => write!(out, "{DIRECTIVE}builtin{RESET}"),
+            DirectiveKind::Type(path) => {
+                write!(out, "{DIRECTIVE}type{RESET}{EQUALS}")?;
+                path.pretty_print(out, ctx, level)
+            }
         }
     }
 }
@@ -299,6 +328,11 @@ impl PrettyPrint<Context> for FnDecl {
         out.write_all(tab.as_bytes())?;
 
         write!(out, "{KIND}FnDecl{RESET} ")?;
+        if let Some(receiver) = &self.receiver {
+            write!(out, "{LPARN}")?;
+            receiver.pretty_print(out, ctx, level)?;
+            write!(out, "{RPARN} ")?;
+        }
         self.name.pretty_print(out, ctx, 0)?;
         write!(out, "{LPARN}")?;
         for param in self.params.iter() {
@@ -313,6 +347,24 @@ impl PrettyPrint<Context> for FnDecl {
         writeln!(out)?;
 
         self.body.pretty_print(out, ctx, level + 1)?;
+        writeln!(out)
+    }
+}
+
+impl PrettyPrint<Context> for TypeDecl {
+    fn pretty_print<Output: io::Write>(
+        &self,
+        out: &mut Output,
+        ctx: &Context,
+        level: usize,
+    ) -> io::Result<()> {
+        let tab = TABWIDTH.repeat(level);
+        out.write_all(tab.as_bytes())?;
+
+        write!(out, "{KIND}TypeDecl{RESET} ")?;
+        self.name.pretty_print(out, ctx, 0)?;
+        write!(out, " {ARROW} ")?;
+        self.target.pretty_print(out, ctx, 0)?;
         writeln!(out)
     }
 }
@@ -464,6 +516,30 @@ impl PrettyPrint<Context> for Expr {
                 }
                 Ok(())
             }
+            ExprKind::Try(try_expr) => {
+                write!(out, "{KEYWORD}Try{RESET} ")?;
+                match &try_expr.body {
+                    TryBody::Expr(expr) => {
+                        expr.pretty_print(out, ctx, 0)?;
+                    }
+                    TryBody::Block(body) => {
+                        writeln!(out)?;
+                        body.pretty_print(out, ctx, level + 1)?;
+                    }
+                }
+
+                if let Some(catch) = &try_expr.catch {
+                    writeln!(out)?;
+                    write!(out, "{tab}{KEYWORD}Catch{RESET}")?;
+                    if let Some(binding) = &catch.binding {
+                        write!(out, " ")?;
+                        binding.pretty_print(out, ctx, 0)?;
+                    }
+                    writeln!(out)?;
+                    catch.body.pretty_print(out, ctx, level + 1)?;
+                }
+                Ok(())
+            }
             ExprKind::ForRange(pat, iter, body) => {
                 write!(out, "{KEYWORD}For{RESET} ")?;
                 pat.pretty_print(out, ctx, 0)?;
@@ -501,6 +577,20 @@ impl PrettyPrint<Context> for Expr {
                     }
                 }
                 write!(out, ")")
+            }
+            ExprKind::Lambda(lambda) => {
+                write!(out, "{OPERATOR}|{RESET}")?;
+                for (i, param) in lambda.params.iter().enumerate() {
+                    if i > 0 {
+                        write!(out, ", ")?;
+                    }
+                    param.pretty_print(out, ctx, 0)?;
+                }
+                write!(out, "{OPERATOR}|{RESET} {OPERATOR}=>{RESET} ")?;
+                match &lambda.body {
+                    LambdaBody::Expr(expr) => expr.pretty_print(out, ctx, 0),
+                    LambdaBody::Block(body) => body.pretty_print(out, ctx, level + 1),
+                }
             }
             ExprKind::Splat(expr) => {
                 write!(out, "{LBRAC}...{RBRAC}")?;
@@ -605,8 +695,9 @@ impl PrettyPrint<Context> for Ty {
             TyKind::Float => write!(out, "{ATTR}float{RESET}"),
             TyKind::Str => write!(out, "{ATTR}string{RESET}"),
             TyKind::Function => write!(out, "{ATTR}fn{RESET}"),
+            TyKind::Iter => write!(out, "{ATTR}iter{RESET}"),
             TyKind::Io => write!(out, "{ATTR}io{RESET}"),
-            TyKind::Handle(name) => write!(out, "{ATTR}{}{RESET}", name),
+            TyKind::UserType(name) => write!(out, "{ATTR}{}{RESET}", name),
             TyKind::Num => write!(out, "{ATTR}num{RESET}"),
             TyKind::Unit => write!(out, "{ATTR}unit{RESET}"),
             TyKind::Type => write!(out, "{ATTR}type{RESET}"),
@@ -625,6 +716,10 @@ impl PrettyPrint<Context> for Ty {
             TyKind::Ref(ty) => {
                 write!(out, "&")?;
                 ty.pretty_print(out, ctx, 0)
+            }
+            TyKind::Optional(ty) => {
+                ty.pretty_print(out, ctx, 0)?;
+                write!(out, "{PUNCT}?{RESET}")
             }
         }
     }

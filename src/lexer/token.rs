@@ -24,6 +24,7 @@ pub enum Token {
     Ampersand,      // &
     Assign,         // =
     RangeAssign,    // :=
+    FatArrow,       // =>
     PathSep,        // ::
     Colon,          // :
     Comma,          // ,
@@ -116,6 +117,7 @@ impl Display for Token {
             Token::Ampersand => write!(f, "&"),
             Token::Assign => write!(f, "="),
             Token::RangeAssign => write!(f, ":="),
+            Token::FatArrow => write!(f, "=>"),
             Token::PathSep => write!(f, "::"),
             Token::Colon => write!(f, ":"),
             Token::Comma => write!(f, ","),
@@ -150,6 +152,7 @@ impl<Ctx> PrettyPrint<Ctx> for Token {
             Token::DirectiveEnd => write!(out, "DirectiveEnd {PUNCT}] {RESET}"),
             Token::Assign => write!(out, "Assign {OPERATOR}={RESET}"),
             Token::RangeAssign => write!(out, "RangeAssign {OPERATOR}:={RESET}"),
+            Token::FatArrow => write!(out, "FatArrow {OPERATOR}=>{RESET}"),
             Token::PathSep => write!(out, "PathSep {OPERATOR}::{RESET}"),
             Token::Ampersand => write!(out, "Ampersand {OPERATOR}&{RESET}"),
             Token::Colon => write!(out, "Colon {PUNCT}:{RESET}"),
@@ -168,31 +171,51 @@ pub enum Keyword {
     Break,
     Continue,
     Const,
+    Catch,
     Dimension,
     Else,
     Fn,
     For,
     If,
     Import,
-    Infix,
     Module,
     Operator,
-    Postfix,
-    Prefix,
     Range,
     Return,
+    Try,
+    Type,
     Unit,
 }
 
 impl Keyword {
-    pub fn is_op_decl(&self) -> bool {
-        matches!(self, Keyword::Infix | Keyword::Postfix | Keyword::Prefix)
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Keyword::Base => "base",
+            Keyword::Break => "break",
+            Keyword::Catch => "catch",
+            Keyword::Continue => "continue",
+            Keyword::Const => "const",
+            Keyword::Dimension => "dimension",
+            Keyword::Else => "else",
+            Keyword::Fn => "fn",
+            Keyword::For => "for",
+            Keyword::If => "if",
+            Keyword::Import => "import",
+            Keyword::Module => "module",
+            Keyword::Operator => "operator",
+            Keyword::Range => "range",
+            Keyword::Return => "return",
+            Keyword::Try => "try",
+            Keyword::Type => "type",
+            Keyword::Unit => "unit",
+        }
     }
 }
 
 pub static KEYWORDS: phf::Map<&'static str, Keyword> = phf_map! {
     "base" => Keyword::Base,
     "break" => Keyword::Break,
+    "catch" => Keyword::Catch,
     "continue" => Keyword::Continue,
     "const" => Keyword::Const,
     "dimension" => Keyword::Dimension,
@@ -201,12 +224,11 @@ pub static KEYWORDS: phf::Map<&'static str, Keyword> = phf_map! {
     "for" => Keyword::For,
     "if" => Keyword::If,
     "import" => Keyword::Import,
-    "infix" => Keyword::Infix,
     "module" => Keyword::Module,
     "operator" => Keyword::Operator,
-    "postfix" => Keyword::Postfix,
-    "prefix" => Keyword::Prefix,
     "range" => Keyword::Range,
     "return" => Keyword::Return,
+    "try" => Keyword::Try,
+    "type" => Keyword::Type,
     "unit" => Keyword::Unit,
 };

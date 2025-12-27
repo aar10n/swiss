@@ -7,8 +7,10 @@ use std::str::FromStr;
 use ustr::Ustr;
 
 pub(super) fn register(ctx: &mut Context) {
-    ctx.get_module_mut("builtin")
+    ctx.module_mut("builtin")
         .expect("builtin module should exist")
+        .new_submodule("encoding")
+        .unwrap()
         .with_function(builtin_fn_v2!("json_encode", |&ctx, value: any| {
             let json = value_to_json(ctx, &value)?;
             Ok(Value::String(json.to_string()))

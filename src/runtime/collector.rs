@@ -4,8 +4,8 @@ use std::env;
 
 use ustr::Ustr;
 
-use crate::runtime::value::VRef;
-use crate::runtime::{Context, Value};
+use crate::runtime::value::{Iterable, VRef};
+use crate::runtime::{Context, FunctionKind, Value};
 
 thread_local! {
     // Global registry of heap nodes that can participate in cycles.
@@ -118,6 +118,18 @@ pub fn collect_cycles(ctx: &Context) {
                 }
                 Value::Ref(r) => {
                     work.push_back(r.get());
+                }
+                Value::Function(func) => {
+                    if let FunctionKind::Lambda { captures, .. } = &func.kind {
+                        for (_, vref) in captures {
+                            work.push_back(vref.get());
+                        }
+                    }
+                }
+                Value::Iter(iter) => {
+                    let mut roots = Vec::new();
+                    iter.shared_iter().collect_roots(&mut roots);
+                    work.extend(roots);
                 }
                 _ => {}
             }

@@ -1,2 +1,5 @@
 .vscode/
 /target
+
+std/tests/tmp/
+tests/testdata/tmp/

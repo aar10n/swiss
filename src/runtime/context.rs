@@ -1,12 +1,13 @@
 use super::encoding::EncodingRegistry;
 use super::exception::StackFrame;
-use super::handle::{Handle, HandleMethodRegistry};
+use super::handle::Handle;
+use super::UserTy;
 use super::module::{Module, ModuleId, ModuleMap};
 use super::operator::{OpAssoc, OpKind, Operator, OperatorTable};
 use super::path::{PathLike, PathTree};
 use super::unit::{Unit, UnitKind, UnitTable};
-use super::value::{VRef, Value, ValueRef, VarId};
-use super::{builtin, DeclError, Function, NameError};
+use super::value::{Ty, VRef, Value, ValueRef, VarId};
+use super::{builtin, DeclError, Function, NameError, UserTypeDef};
 
 use crate::ast::{BinaryCoercion, Coercion, FloatConversion, NodeId, Path, UnitPreference, P};
 use crate::source::{SourceId, SourceMap, SourceProvider, SourceSpan, Spanned};
@@ -34,7 +35,6 @@ pub struct Context {
     // returns None).
     pub last_value: Option<Value>,
     pub encodings: EncodingRegistry,
-    pub handle_methods: HandleMethodRegistry,
 
     active_module: Option<ModuleId>,
     call_stack: Vec<StackFrame>,
@@ -82,8 +82,6 @@ impl Context {
             default_formatter: None,
             last_value: None,
             encodings: EncodingRegistry::new(),
-            handle_methods: HandleMethodRegistry::new(),
-
             active_module: None,
             call_stack: Vec::new(),
             local_scopes: Vec::new(),
@@ -257,6 +255,24 @@ impl Context {
         result
     }
 
+    pub fn with_lambda_call<T, Ctx>(
+        ctx: &mut Ctx,
+        frame: StackFrame,
+        scopes: Vec<LocalScope>,
+        f: impl FnOnce(&mut Ctx) -> T,
+    ) -> T
+    where
+        Ctx: ContextProvider,
+    {
+        let prev_scopes = std::mem::take(&mut ctx.context_mut().local_scopes);
+        ctx.context_mut().local_scopes = scopes;
+        ctx.context_mut().call_stack.push(frame);
+        let result = f(ctx);
+        ctx.context_mut().call_stack.pop();
+        ctx.context_mut().local_scopes = prev_scopes;
+        result
+    }
+
     /// Best-effort cleanup of reference cycles. Runs a lightweight mark/sweep
     /// that clears unreachable list/object contents so refcounts can drop.
     pub fn collect_cycles(&mut self) {
@@ -325,7 +341,10 @@ impl Context {
     }
 
     fn module_value(&self, module_id: ModuleId) -> ValueRef {
-        ValueRef::new_const(Value::Handle(Handle::new(Ustr::from("module"), module_id)))
+        ValueRef::new_const(Value::UserType(UserTy::Handle(Handle::new(
+            Ustr::from("module"),
+            module_id,
+        ))))
     }
 
     pub fn resolve_variable(&mut self, path: impl PathLike) -> Result<ValueRef, NameError> {
@@ -346,6 +365,14 @@ impl Context {
             Err(_) => {
                 if let Ok(func) = self.modules.resolve_function_in(module_id, name.clone()) {
                     Ok(ValueRef::new_const(Value::Function(func.clone())))
+                } else if let Ok(ty) = self.modules.resolve_type_in(module_id, name.clone()) {
+                    Ok(ValueRef::new_const(Value::Ty(Ty::UserType(
+                        ty.name.raw,
+                    ))))
+                } else if path.len() == 1 {
+                    builtin_type_value(name.raw)
+                        .map(ValueRef::new_const)
+                        .ok_or_else(|| NameError::new("undefined", name.to_string_inner()))
                 } else if let Ok(module_id) = self.resolve_module_id(path.parts()) {
                     Ok(self.module_value(module_id))
                 } else {
@@ -364,6 +391,37 @@ impl Context {
 
         self.modules.resolve_function_in(module_id, name)
     }
+
+    pub fn resolve_type(&self, path: impl PathLike) -> Result<&UserTypeDef, NameError> {
+        let (module_id, name) = if path.len() == 1 {
+            (self.active_module().unwrap().id, path.base_part())
+        } else {
+            (self.resolve_module_id(path.dir_parts())?, path.base_part())
+        };
+
+        self.modules.resolve_type_in(module_id, name)
+    }
+}
+
+fn builtin_type_value(name: Ustr) -> Option<Value> {
+    let ty = match name.as_str() {
+        "any" => Ty::Any,
+        "bool" => Ty::Bool,
+        "int" => Ty::Int,
+        "float" => Ty::Float,
+        "num" => Ty::Num,
+        "str" => Ty::Str,
+        "fn" => Ty::Function,
+        "iter" => Ty::Iter,
+        "unit" => Ty::Unit,
+        "type" => Ty::Type,
+        "list" => Ty::List,
+        "object" => Ty::Object,
+        "tuple" => Ty::Tuple(smallvec::SmallVec::new()),
+        "io" => Ty::UserType(Ustr::from("io")),
+        _ => return None,
+    };
+    Some(Value::Ty(ty))
 }
 
 impl SourceProvider for Context {
@@ -427,9 +485,25 @@ impl LocalScope {
         self.vars.insert(name, value.into_ref());
     }
 
+    pub fn insert_ref(&mut self, name: Ustr, value: ValueRef) {
+        self.vars.insert(name, value);
+    }
+
     pub fn extend<I: Iterator<Item = (Ustr, Value)>>(&mut self, vars: I) {
         for (name, value) in vars {
             self.insert(name, value);
+        }
+    }
+
+    pub fn extend_refs<I: Iterator<Item = (Ustr, ValueRef)>>(&mut self, vars: I) {
+        for (name, value) in vars {
+            self.insert_ref(name, value);
+        }
+    }
+
+    pub fn from_refs<I: Iterator<Item = (Ustr, ValueRef)>>(vars: I) -> Self {
+        Self {
+            vars: vars.collect(),
         }
     }
 
@@ -447,6 +521,7 @@ impl<T: Into<Ustr>, I: Iterator<Item = (T, Value)>> From<I> for LocalScope {
         }
     }
 }
+
 
 // MARK: ContextProvider
 

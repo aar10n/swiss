@@ -53,3 +53,94 @@ EXPECT_ERROR: Exception: tuple index out of range: 3
 TEST: Indexing non-container
 INPUT: 42[0]
 EXPECT_ERROR: Exception: cannot index into type: int
+
+// Equality operator
+
+TEST: Equality bools equal
+INPUT: false == false
+EXPECT: true
+
+TEST: Equality bool vs num
+INPUT: true == 1
+EXPECT: false
+
+TEST: Equality int vs float
+INPUT: 1 == 1.0
+EXPECT: true
+
+TEST: Equality str vs num
+INPUT: "1" == 1
+EXPECT: false
+
+TEST: Equality list vs false
+INPUT: [] == false
+EXPECT: false
+
+TEST: Equality list vs tuple
+INPUT: [1, 2] == (1, 2)
+EXPECT: false
+
+TEST: Equality object order
+INPUT: {"a": 1, "b": 2} == {"b": 2, "a": 1}
+EXPECT: true
+
+TEST: Equality object value diff
+INPUT: {"a": 1} == {"a": 2}
+EXPECT: false
+
+TEST: Equality unit equal
+INPUT: () == ()
+EXPECT: true
+
+TEST: Equality unit vs list
+INPUT: () == []
+EXPECT: false
+
+TEST: Truthiness not empty list
+INPUT: ![]
+EXPECT: true
+
+TEST: Truthiness not nonempty str
+INPUT: !"hello"
+EXPECT: false
+
+TEST: List equality
+INPUT: {
+  [
+    [1, 2, 3] == [1, 2, 3],
+    [1, 2, 3] == [3, 2, 1],
+  ]
+}
+EXPECT: [true, false]
+
+TEST: List equality nested
+INPUT: {
+  [
+    [[1, 2], [3]] == [[1, 2], [3]],
+    [[1, 2], [3]] == [[3], [1, 2]],
+  ]
+}
+EXPECT: [true, false]
+
+TEST: Tuple equality
+INPUT: {
+  [
+    (1, 2) == (1, 2),
+    (1, 2) == (2, 1),
+  ]
+}
+EXPECT: [true, false]
+
+TEST: Object equality
+INPUT: {
+  [
+    {"a": 1, "b": 2} == {"a": 1, "b": 2},
+    {"a": 1, "b": 2} == {"b": 2, "a": 1},
+    {"a": 1, "b": 2} == {"a": 2, "b": 1},
+  ]
+}
+EXPECT: [true, true, false]
+
+TEST: List vs tuple equality false
+INPUT: [1, 2] == (1, 2)
+EXPECT: false

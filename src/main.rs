@@ -14,7 +14,7 @@ mod source;
 use id::{ModuleId, SourceId};
 use print::ansi::{GREEN, RESET, YELLOW};
 use print::{PrettyPrint, PrettyString};
-use runtime::{Context, Handle, IoHandle, Value};
+use runtime::{Context, Handle, IoHandle, UserTy, Value};
 use source::{SourceFile, SourceSpan, Spanned};
 
 use std::env;
@@ -128,7 +128,13 @@ fn evaluate(
                             crate::interp::call_function(
                                 ctx,
                                 &func,
-                                vec![value.clone(), Value::Handle(Handle::new("io".into(), io.clone()))],
+                                vec![
+                                    value.clone(),
+                                    Value::UserType(UserTy::Handle(Handle::new(
+                                        "io".into(),
+                                        io.clone(),
+                                    ))),
+                                ],
                             )
                         });
                         if res.is_ok() {

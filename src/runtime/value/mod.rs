@@ -8,6 +8,7 @@ mod value;
 
 pub use dim::*;
 pub use crate::runtime::handle::Handle;
+pub use iterator::{IterValue, Iterable};
 pub use number::*;
 pub use quantity::*;
 pub use reference::*;

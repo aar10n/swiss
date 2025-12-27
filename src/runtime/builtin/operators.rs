@@ -1,12 +1,26 @@
 use crate::interp;
 use crate::print::PrettyString;
-use crate::runtime::{Context, Exception, Module, Quantity, Value};
+use crate::runtime::{Context, Exception, Module, Quantity, Ty, Value};
+use crate::source::{SourceSpan, Spanned};
 
 use ustr::Ustr;
 
 pub(super) fn register(ctx: &mut Context) {
     ctx.get_module_mut("builtin")
         .expect("builtin module should exist")
+        .with_function(builtin_fn_v2!("eq", |&ctx, x: any, y: any| {
+            Value::eq(ctx, &x, &y)
+        }))
+        .with_function(builtin_fn_v2!("ne", |&ctx, x: any, y: any| {
+            Ok(!Value::eq(ctx, &x, &y)?)
+        }))
+        .with_function(builtin_fn_v2!("not", |&ctx, x: any| { Ok(x.is_zero()) }))
+        .with_function(builtin_fn_v2!("and", |&ctx, x: any, y: any| {
+            Ok(x.is_truthy() && y.is_truthy())
+        }))
+        .with_function(builtin_fn_v2!("or", |&ctx, x: any, y: any| {
+            Ok(x.is_truthy() || y.is_truthy())
+        }))
         .with_function(builtin_fn_v2!("pos", |&ctx, x: num| Ok(x)))
         .with_function(builtin_fn_v2!("neg", |&ctx, x: num| Ok(-x)))
         .with_function(builtin_fn_v2!("add", |&ctx, x: num, y: num| {
@@ -40,12 +54,6 @@ pub(super) fn register(ctx: &mut Context) {
             *a = Quantity::safe_div(ctx, a.clone(), b)?;
             Ok(a.clone())
         }))
-        .with_function(builtin_fn_v2!("eq", |&ctx, x: num, y: num| {
-            Quantity::safe_eq(ctx, x, y)
-        }))
-        .with_function(builtin_fn_v2!("ne", |&ctx, x: num, y: num| {
-            Quantity::safe_ne(ctx, x, y)
-        }))
         .with_function(builtin_fn_v2!("lt", |&ctx, x: num, y: num| {
             Quantity::safe_lt(ctx, x, y)
         }))
@@ -57,15 +65,6 @@ pub(super) fn register(ctx: &mut Context) {
         }))
         .with_function(builtin_fn_v2!("ge", |&ctx, x: num, y: num| {
             Quantity::safe_ge(ctx, x, y)
-        }))
-        .with_function(builtin_fn_v2!("not", |&ctx, x: num| {
-            Quantity::safe_not(ctx, x)
-        }))
-        .with_function(builtin_fn_v2!("and", |&ctx, x: num, y: num| {
-            Quantity::safe_and(ctx, x, y)
-        }))
-        .with_function(builtin_fn_v2!("or", |&ctx, x: num, y: num| {
-            Quantity::safe_or(ctx, x, y)
         }))
         .with_function(builtin_fn_v2!("bit_not", |&ctx, x: num| {
             Quantity::safe_bit_not(ctx, x)
@@ -181,39 +180,11 @@ pub(super) fn register(ctx: &mut Context) {
         .with_function(builtin_fn_v2!(
             "method_call",
             |&ctx, handle: any, spec: any| {
-                // Extract handle
-                let handle = match handle {
-                    Value::Handle(h) => h,
-                    Value::Ref(r) => match r.borrow().clone() {
-                        Value::Handle(h) => h,
-                        other => {
-                            return Err(Exception::new(
-                                "TypeError",
-                                format!(
-                                    "expected handle on lhs of '.', found {}",
-                                    other.ty().pretty_string(ctx)
-                                ),
-                            )
-                            .with_backtrace(ctx.backtrace()))
-                        }
-                    },
-                    other => {
-                        return Err(Exception::new(
-                            "TypeError",
-                            format!(
-                                "expected handle on lhs of '.', found {}",
-                                other.ty().pretty_string(ctx)
-                            ),
-                        )
-                        .with_backtrace(ctx.backtrace()))
-                    }
-                };
-
                 // Extract (method_name, args_list)
                 let (method_name, arg_values) = match spec {
                     Value::Tuple(items) if items.len() == 2 => {
-                        let name_val = &items[0];
-                        let args_val = &items[1];
+                        let name_val = items.get(0).expect("tuple length checked");
+                        let args_val = items.get(1).expect("tuple length checked");
 
                         let name = match &**name_val {
                             Value::String(s) => s.clone(),
@@ -290,27 +261,96 @@ pub(super) fn register(ctx: &mut Context) {
                     }
                 };
 
-                // Resolve the method function registered for this handle type.
-                let func = ctx
-                    .handle_methods
-                    .get(handle.tag(), method_name.clone().into())
+                let recv_value = match handle {
+                    Value::Ref(r) => r.borrow().clone(),
+                    other => other,
+                };
+
+                let module_id = ctx
+                    .active_module()
+                    .map(|module| module.id)
                     .ok_or_else(|| {
-                        Exception::new(
-                            "NameError",
-                            format!(
-                                "handle type '{}' has no method '{}'",
-                                handle.tag(),
-                                method_name
-                            ),
-                        )
-                        .with_backtrace(ctx.backtrace())
+                        Exception::new("RuntimeError", "no active module".to_string())
+                            .with_backtrace(ctx.backtrace())
                     })?;
 
+                let func = match &recv_value {
+                    Value::UserType(user_ty) => {
+                        let type_name = user_ty.tag();
+                        let ty = ctx
+                            .modules
+                            .resolve_type_in(
+                                module_id,
+                                Spanned::new(type_name, SourceSpan::default()),
+                            )
+                            .map_err(|_| {
+                                Exception::new(
+                                    "NameError",
+                                    format!("undefined type '{}'", type_name),
+                                )
+                                .with_backtrace(ctx.backtrace())
+                            })?;
+
+                        ty.get_method(method_name.clone().into()).ok_or_else(|| {
+                            Exception::new(
+                                "NameError",
+                                format!("type '{}' has no method '{}'", type_name, method_name),
+                            )
+                            .with_backtrace(ctx.backtrace())
+                        })?
+                    }
+                    other => {
+                        let ty = other.ty();
+                        let type_name = builtin_type_name(&ty).ok_or_else(|| {
+                            Exception::new(
+                                "TypeError",
+                                format!(
+                                    "expected user type or builtin type on lhs of '.', found {}",
+                                    ty.pretty_string(ctx)
+                                ),
+                            )
+                            .with_backtrace(ctx.backtrace())
+                        })?;
+                        ctx.modules
+                            .resolve_builtin_type_method_in(
+                                module_id,
+                                Spanned::new(type_name, SourceSpan::default()),
+                                Spanned::new(Ustr::from(method_name.as_str()), SourceSpan::default()),
+                            )
+                            .map_err(|_| {
+                                Exception::new(
+                                    "NameError",
+                                    format!("type '{}' has no method '{}'", type_name, method_name),
+                                )
+                                .with_backtrace(ctx.backtrace())
+                            })?
+                    }
+                };
+
                 let mut call_args = Vec::with_capacity(1 + arg_values.len());
-                call_args.push(Value::Handle(handle));
+                call_args.push(recv_value);
                 call_args.extend(arg_values);
 
                 interp::call_function(ctx, &func, call_args)
             }
         ));
+}
+
+fn builtin_type_name(ty: &Ty) -> Option<Ustr> {
+    match ty {
+        Ty::Any => Some(Ustr::from("any")),
+        Ty::Bool => Some(Ustr::from("bool")),
+        Ty::Int => Some(Ustr::from("int")),
+        Ty::Float => Some(Ustr::from("float")),
+        Ty::Num => Some(Ustr::from("num")),
+        Ty::Str => Some(Ustr::from("str")),
+        Ty::Function => Some(Ustr::from("fn")),
+        Ty::Iter => Some(Ustr::from("iter")),
+        Ty::List => Some(Ustr::from("list")),
+        Ty::Object => Some(Ustr::from("object")),
+        Ty::Tuple(_) => Some(Ustr::from("tuple")),
+        Ty::Unit => Some(Ustr::from("unit")),
+        Ty::Type => Some(Ustr::from("type")),
+        _ => None,
+    }
 }

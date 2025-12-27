@@ -29,20 +29,20 @@ impl Pattern {
             Pattern::Ignore => Ok(SmallVec::new()),
             Pattern::Var(ident) => Ok(smallvec![(ident.clone(), value)]),
             Pattern::Tuple(pats) => {
-                if let Value::Tuple(values) = value {
-                    if values.len() < pats.len() {
+                if let Value::Tuple(tuple) = value {
+                    if tuple.len() < pats.len() {
                         Err(Exception::new(
                             "ValueError",
                             format!("not enough values to bind (expected {})", pats.len()),
                         ))
-                    } else if values.len() > pats.len() {
+                    } else if tuple.len() > pats.len() {
                         Err(Exception::new(
                             "ValueError",
                             format!("too many values to bind (expected {})", pats.len()),
                         ))
                     } else {
                         let mut bindings = SmallVec::new();
-                        for (pat, value) in pats.iter().zip(values) {
+                        for (pat, value) in pats.iter().zip(tuple.into_items()) {
                             bindings.extend(pat.bind_with(ctx, *value)?);
                         }
                         Ok(bindings)

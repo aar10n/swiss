@@ -1,0 +1,17 @@
+INCLUDE: prelude.ch
+
+TEST: Try without catch returns empty on error
+INPUT: try 1 / 0
+EXPECT: ()
+
+TEST: Try with catch expression recovers
+INPUT: try 1 / 0 catch { 5 }
+EXPECT: 5
+
+TEST: Try with catch binding returns error string
+INPUT: try { 1 / 0 } catch e { e }
+EXPECT: "ValueError: division by zero"
+
+TEST: Error builtin throws with message
+INPUT: try error("boom") catch e { e }
+EXPECT: "Error: boom"

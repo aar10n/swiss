@@ -2,6 +2,7 @@ use super::conversion::ConversionGraph;
 use super::dimension::{DimExpr, Dimension, DimensionTable};
 use super::interface::{Interface, InterfaceTable};
 use super::name::{Constant, Function, Name, NameResult, NameTable, Param};
+use super::UserTypeDef;
 use super::operator::{OpAssoc, OpKind, Operator, OperatorTable};
 use super::path::{PathLike, PathTree};
 use super::unit::{Unit, UnitKind, UnitTable};
@@ -17,7 +18,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::ops::{Index, IndexMut};
 use std::rc::Rc;
-use ustr::Ustr;
+use ustr::{Ustr, UstrMap};
 
 // MARK: Module
 
@@ -32,6 +33,9 @@ pub struct Module {
     /// Aliases to other modules (imported sub-modules).
     pub module_aliases: BTreeMap<Ustr, (ModuleId, SourceSpan)>,
     pub names: NameTable,
+    pub types: UstrMap<UserTypeDef>,
+    pub constructors: UstrMap<Function>,
+    pub builtin_methods: UstrMap<UstrMap<Function>>,
     pub dimensions: DimensionTable,
     pub interfaces: InterfaceTable,
     pub operators: OperatorTable,
@@ -50,6 +54,9 @@ impl Module {
             opened: Vec::new(),
             module_aliases: BTreeMap::new(),
             names: NameTable::new(),
+            types: UstrMap::default(),
+            constructors: UstrMap::default(),
+            builtin_methods: UstrMap::default(),
             dimensions: DimensionTable::new(),
             interfaces: InterfaceTable::new(),
             operators: OperatorTable::new_with_builtins(),
@@ -62,11 +69,73 @@ impl Module {
     // Item Registration
 
     pub fn register_constant(&mut self, constant: Constant) -> Result<(), DeclError> {
+        if let Some(existing) = self.types.get(&constant.name.raw) {
+            return Err(DeclError::new(
+                "constant",
+                constant.name.to_string_inner(),
+                existing.name.span(),
+            ));
+        }
         self.names.insert_constant(constant)
     }
 
     pub fn register_function(&mut self, func: Function) -> Result<(), DeclError> {
+        let mut func = func;
+        func.module_id = Some(self.id);
+        if let Some(existing) = self.types.get(&func.name.raw) {
+            return Err(DeclError::new(
+                "function",
+                func.name.to_string_inner(),
+                existing.name.span(),
+            ));
+        }
         self.names.insert_function(func)
+    }
+
+    pub fn register_function_alias(&mut self, func: Function) -> Result<(), DeclError> {
+        if let Some(existing) = self.types.get(&func.name.raw) {
+            return Err(DeclError::new(
+                "function",
+                func.name.to_string_inner(),
+                existing.name.span(),
+            ));
+        }
+        self.names.insert_function(func)
+    }
+
+    pub fn register_type(&mut self, ty: UserTypeDef) -> Result<(), DeclError> {
+        if self.names.contains(&ty.name.raw) {
+            return Err(DeclError::new(
+                "type",
+                ty.name.to_string_inner(),
+                ty.name.span(),
+            ));
+        }
+        if let Some(existing) = self.types.get(&ty.name.raw) {
+            return Err(DeclError::new(
+                "type",
+                ty.name.to_string_inner(),
+                existing.name.span(),
+            ));
+        }
+        self.types.insert(ty.name.raw, ty);
+        Ok(())
+    }
+
+    pub fn register_constructor(
+        &mut self,
+        name: Spanned<Ustr>,
+        func: Function,
+    ) -> Result<(), DeclError> {
+        if let Some(existing) = self.constructors.get(&name.raw) {
+            return Err(DeclError::new(
+                "constructor",
+                name.to_string_inner(),
+                existing.name.span(),
+            ));
+        }
+        self.constructors.insert(name.raw, func);
+        Ok(())
     }
 
     pub fn with_constant(&mut self, constant: Constant) -> &mut Self {
@@ -77,6 +146,48 @@ impl Module {
     pub fn with_function(&mut self, func: Function) -> &mut Self {
         self.register_function(func).unwrap();
         self
+    }
+
+    pub fn with_type(&mut self, name: impl Into<Ustr>) -> &mut Self {
+        let name = name.into();
+        let ty = UserTypeDef::new(Spanned::new(name, SourceSpan::default()));
+        self.register_type(ty).unwrap();
+        self
+    }
+
+    pub fn register_type_method(
+        &mut self,
+        type_name: Spanned<Ustr>,
+        func: Function,
+    ) -> Result<(), DeclError> {
+        let mut func = func;
+        func.module_id = Some(self.id);
+        let ty = self
+            .types
+            .get_mut(&type_name.raw)
+            .ok_or_else(|| {
+                DeclError::new("type", type_name.to_string_inner(), type_name.span)
+            })?;
+        ty.register_method(func)
+    }
+
+    pub fn register_builtin_type_method(
+        &mut self,
+        type_name: Spanned<Ustr>,
+        func: Function,
+    ) -> Result<(), DeclError> {
+        let mut func = func;
+        func.module_id = Some(self.id);
+        let methods = self.builtin_methods.entry(type_name.raw).or_default();
+        if let Some(existing) = methods.get(&func.name.raw) {
+            return Err(DeclError::new(
+                "type method",
+                func.name.to_string_inner(),
+                existing.name.span,
+            ));
+        }
+        methods.insert(func.name.raw, func);
+        Ok(())
     }
 
     pub fn with_interface(&mut self, interface: Interface) -> &mut Self {
@@ -205,6 +316,8 @@ impl Module {
     }
 
     pub fn register_unnamed_function(&mut self, func: Function) -> VarId {
+        let mut func = func;
+        func.module_id = Some(self.id);
         let id = var_id::next();
         self.unnamed.insert(id, func);
         id
@@ -447,6 +560,79 @@ impl ModuleMap {
                 Err(NameError::new("undefined", name.to_string_inner()))
             }
         }
+    }
+
+    pub fn resolve_type_in(
+        &self,
+        module_id: ModuleId,
+        name: Spanned<Ustr>,
+    ) -> Result<&UserTypeDef, NameError> {
+        let module = &self[module_id];
+        if let Some(ty) = module.types.get(&name.raw) {
+            return Ok(ty);
+        }
+        for mid in &module.opened {
+            let other = &self[*mid];
+            if let Some(ty) = other.types.get(&name.raw) {
+                return Ok(ty);
+            }
+        }
+        Err(NameError::new("undefined type", name.to_string_inner()))
+    }
+
+    pub fn resolve_constructor_in(
+        &self,
+        module_id: ModuleId,
+        name: Spanned<Ustr>,
+    ) -> Result<&Function, NameError> {
+        let module = &self[module_id];
+        if let Some(func) = module.constructors.get(&name.raw) {
+            return Ok(func);
+        }
+        for mid in &module.opened {
+            let other = &self[*mid];
+            if let Some(func) = other.constructors.get(&name.raw) {
+                return Ok(func);
+            }
+        }
+        Err(NameError::new("undefined constructor", name.to_string_inner()))
+    }
+
+    pub fn resolve_type_method_in(
+        &self,
+        module_id: ModuleId,
+        type_name: Spanned<Ustr>,
+        method_name: Spanned<Ustr>,
+    ) -> Result<Function, NameError> {
+        let ty = self.resolve_type_in(module_id, type_name.clone())?;
+        ty.get_method(method_name.raw).ok_or_else(|| {
+            NameError::new("undefined method", method_name.to_string_inner())
+                .with_extra(format!("on type '{}'", type_name.raw))
+        })
+    }
+
+    pub fn resolve_builtin_type_method_in(
+        &self,
+        module_id: ModuleId,
+        type_name: Spanned<Ustr>,
+        method_name: Spanned<Ustr>,
+    ) -> Result<Function, NameError> {
+        let module = &self[module_id];
+        if let Some(methods) = module.builtin_methods.get(&type_name.raw) {
+            if let Some(func) = methods.get(&method_name.raw) {
+                return Ok(func.clone());
+            }
+        }
+        for mid in &module.opened {
+            let other = &self[*mid];
+            if let Some(methods) = other.builtin_methods.get(&type_name.raw) {
+                if let Some(func) = methods.get(&method_name.raw) {
+                    return Ok(func.clone());
+                }
+            }
+        }
+        Err(NameError::new("undefined method", method_name.to_string_inner())
+            .with_extra(format!("on type '{}'", type_name.raw)))
     }
 
     pub fn resolve_dimension_in(
