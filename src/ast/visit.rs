@@ -464,6 +464,13 @@ impl Visit for Expr {
             ExprKind::String(string) => {
                 visitor.visit_string(string)?;
             }
+            ExprKind::InterpolatedString(parts) => {
+                for part in parts.iter_mut() {
+                    if let StringPart::Expr(expr) = part {
+                        expr.visit(visitor)?;
+                    }
+                }
+            }
             ExprKind::Boolean(boolean) => {
                 visitor.visit_boolean(boolean)?;
             }

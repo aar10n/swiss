@@ -3,7 +3,8 @@ use super::{InterpError, InterpResult, NameError, TypeError, Value};
 use crate::ast::*;
 use crate::id::VarId;
 use crate::interp::Exception;
-use crate::print::{PrettyPrint, PrettyString};
+use crate::print::ansi::strip_ansi_codes;
+use crate::print::{DisplayString, PrettyPrint, PrettyString};
 use crate::runtime::{
     self as rt, CastInto, Constant, Context, ContextProvider, Function, LRValue, List, LocalScope,
     ModuleId, PathLike, StackFrame, Tuple, ValueRef,
@@ -264,6 +265,13 @@ impl<'a> CaptureCollector<'a> {
             }
             ExprKind::Lambda(_) => {}
             ExprKind::Ident(ident) => self.capture_read(ident.raw),
+            ExprKind::InterpolatedString(parts) => {
+                for part in parts.iter() {
+                    if let StringPart::Expr(expr) = part {
+                        self.visit_expr(expr);
+                    }
+                }
+            }
             ExprKind::Path(_)
             | ExprKind::Empty
             | ExprKind::Number(_)
@@ -2774,7 +2782,7 @@ impl<'ctx> Interp<'ctx, LRValue> for Expr {
                                 }
                             };
 
-                            let key_ustr = Ustr::from(&key);
+                            let key_ustr = Ustr::from(key.as_str());
                             let mut fields = object.borrow_mut();
                             if let Some((_, val)) = fields.iter_mut().find(|(k, _)| *k == key_ustr) {
                                 *val = new_val;
@@ -2869,7 +2877,7 @@ impl<'ctx> Interp<'ctx, LRValue> for Expr {
                         Ok(value) => Ok(LRValue::R(value)),
                         Err(InterpError::Exception(err)) => {
                             if let Some(catch) = &try_expr.catch {
-                                let err_value = Value::String(err.to_string());
+                                let err_value = Value::from(err.to_string());
                                 if let Some(binding) = &catch.binding {
                                     let scope = LocalScope::from(
                                         std::iter::once((binding.raw, err_value)),
@@ -3021,7 +3029,26 @@ impl<'ctx> Interp<'ctx, LRValue> for Expr {
                 ExprKind::Number(num) => Ok(LRValue::R(
                     Interp::<rt::Number>::eval(num, intrp).map(Value::from)?,
                 )),
-                ExprKind::String(s) => Ok(LRValue::R(Value::String(s.clone()))),
+                ExprKind::String(s) => Ok(LRValue::R(Value::from(s.clone()))),
+                ExprKind::InterpolatedString(parts) => {
+                    let mut result = String::new();
+                    for part in parts {
+                        match part {
+                            StringPart::Text(text) => result.push_str(text),
+                            StringPart::Expr(expr) => {
+                                let value = Interp::<Value>::eval(expr, intrp)?;
+                                match &value {
+                                    Value::String(s) => result.push_str(s.as_str()),
+                                    _ => {
+                                        let raw = value.display_string(intrp.ctx);
+                                        result.push_str(&strip_ansi_codes(&raw));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Ok(LRValue::R(Value::from(result)))
+                }
                 ExprKind::Boolean(b) => Ok(LRValue::R(Value::Boolean(*b))),
                 ExprKind::Unit(unit) => {
                     let module_id = intrp.ctx.active_module().unwrap().id;
@@ -3117,12 +3144,8 @@ fn apply_slice(
             (len, Box::new(slicer))
         }
         Value::String(s) => {
-            let chars: Vec<char> = s.chars().collect();
-            let len = chars.len();
-            let slicer = move |start, stop| {
-                let slice: String = chars[start..stop].iter().collect();
-                Value::String(slice)
-            };
+            let len = s.len_chars();
+            let slicer = move |start, stop| Value::String(s.slice_chars(start, stop));
             (len, Box::new(slicer))
         }
         other => {

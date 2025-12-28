@@ -55,8 +55,10 @@ fn (bool) new(): bool { builtin::bool_new() }
 fn (int) new(): int { builtin::int_new() }
 #[builtin]
 fn (float) new(): float { builtin::float_new() }
+
 #[builtin]
 fn (str) new(): str { builtin::str_new() }
+
 #[builtin]
 fn (iter) new(v: iter): iter { builtin::iter_new(v) }
 #[builtin]
@@ -319,20 +321,32 @@ const phi = 1.61803398874989484820
 import fs::{file, open}
 
 #[builtin]
+fn dir(x: any?): list { builtin::dir(x) }
+#[builtin]
 fn error(msg: str?) { builtin::error(msg) }
-
 #[builtin]
-fn dir(x: any?) { builtin::dir(x) }
-#[builtin]
-fn len(v: any) { builtin::len(v) }
+fn len(v: any): int { builtin::len(v) }
 #[builtin]
 fn print(v...) { builtin::print(v...) }
+#[builtin]
+fn to_string(v: any): str { builtin::to_string(v) }
+
+#[builtin]
+fn conversions(v: any): list { builtin::conversions(v) }
+#[builtin]
+fn typeof(v: any): type { builtin::typeof(v) }
+#[builtin]
+fn unitof(v: any): unit { builtin::unitof(v) }
+
 #[builtin]
 fn reverse(v: any) { builtin::reverse(v) }
 #[builtin]
 fn delete(obj: object, key: str) { builtin::delete(obj, key) }
 #[builtin]
 fn append(list: list, item: any) { builtin::append(list, item) }
+
+#[builtin]
+fn next(xs: iter): any? { builtin::next(xs) }
 #[builtin]
 fn map(xs: iter, f: fn) { builtin::map(xs, f) }
 #[builtin]
@@ -341,8 +355,6 @@ fn filter(xs: iter, pred: fn) { builtin::filter(xs, pred) }
 fn reduce(xs: iter, f: fn, init: any?) { builtin::reduce(xs, f, init) }
 #[builtin]
 fn enumerate(xs: iter) { builtin::enumerate(xs) }
-#[builtin]
-fn next(xs: iter) { builtin::next(xs) }
 
 ; Formatters
 

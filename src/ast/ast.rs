@@ -801,12 +801,20 @@ pub enum ExprKind {
     Number(Number),
     /// A string
     String(String),
+    /// A string with interpolation.
+    InterpolatedString(Vec<StringPart>),
     /// A boolean.
     Boolean(bool),
     /// A unit.
     Unit(Unit),
     /// A type.
     Type(Ty),
+}
+
+#[derive(Clone, Debug)]
+pub enum StringPart {
+    Text(String),
+    Expr(P<Expr>),
 }
 
 impl Expr {
@@ -900,6 +908,10 @@ impl Expr {
 
     pub fn string(string: String) -> Self {
         Self::new(ExprKind::String(string))
+    }
+
+    pub fn interpolated_string(parts: Vec<StringPart>) -> Self {
+        Self::new(ExprKind::InterpolatedString(parts))
     }
 
     pub fn boolean(value: bool) -> Self {

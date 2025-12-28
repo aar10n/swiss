@@ -50,6 +50,27 @@ pub fn lex(source_id: SourceId, source_raw: &str) -> Result<Vec<(Token, SourceSp
     }
 }
 
+pub fn lex_with_offset(
+    source_id: SourceId,
+    source_raw: &str,
+    offset: usize,
+) -> Result<Vec<(Token, SourceSpan)>, LexError> {
+    match lexer::Lexer::new_with_offset(source_id, source_raw, offset, false).lex() {
+        Ok(tokens) => {
+            let tokens = TokenFilter::new(tokens.into_iter(), |(t, s)| {
+                if matches!(t, Token::Comment(_)) {
+                    None
+                } else {
+                    Some((t, s))
+                }
+            })
+            .collect::<Vec<_>>();
+            Ok(tokens)
+        }
+        Err(err) => Err(err),
+    }
+}
+
 // MARK: TokenFilter
 
 pub struct TokenFilter<I, F, T>

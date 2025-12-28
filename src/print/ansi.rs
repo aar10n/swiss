@@ -90,3 +90,12 @@ impl<'a, W: Write + ?Sized> Write for StripAnsi<'a, W> {
         self.writer.flush()
     }
 }
+
+pub fn strip_ansi_codes(input: &str) -> String {
+    let mut buf = Vec::new();
+    {
+        let mut writer = StripAnsi::new(&mut buf);
+        let _ = writer.write_all(input.as_bytes());
+    }
+    String::from_utf8_lossy(&buf).into_owned()
+}

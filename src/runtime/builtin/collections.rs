@@ -104,7 +104,7 @@ pub(super) fn register(ctx: &mut Context) {
         .expect("builtin module should exist")
         .with_function(builtin_fn_v2!("len", |&ctx, v: any| {
             let len = match v {
-                Value::String(s) => s.chars().count(),
+                Value::String(s) => s.len_chars(),
                 Value::List(l) => l.len(),
                 Value::Tuple(t) => t.len(),
                 Value::Object(o) => o.borrow().len(),
@@ -130,7 +130,7 @@ pub(super) fn register(ctx: &mut Context) {
                         items.into_iter().map(Box::new).collect(),
                     )))
                 }
-                Value::String(s) => Value::String(s.chars().rev().collect()),
+                Value::String(s) => Value::from(s.as_str().chars().rev().collect::<String>()),
                 other => {
                     return Err(Exception::new(
                         "TypeError",
@@ -147,7 +147,7 @@ pub(super) fn register(ctx: &mut Context) {
         .with_function(builtin_fn_v2!("delete", |&ctx, obj: any, key: str| {
             match obj {
                 Value::Object(map) => {
-                    let key_ustr = Ustr::from(&key);
+                    let key_ustr = Ustr::from(key.as_str());
                     let mut fields = map.borrow_mut();
                     if let Some(pos) = fields.iter().position(|(k, _)| *k == key_ustr) {
                         fields.remove(pos);

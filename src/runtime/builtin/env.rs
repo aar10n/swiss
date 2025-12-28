@@ -7,8 +7,8 @@ pub(super) fn register(ctx: &mut Context) {
         .new_submodule("env")
         .unwrap()
         .with_function(builtin_fn_v2!("getenv", |&ctx, var: str| {
-            match env::var(var) {
-                Ok(value) => Ok(Value::String(value)),
+            match env::var(var.as_str()) {
+                Ok(value) => Ok(Value::from(value)),
                 Err(env::VarError::NotPresent) => Ok(Value::Empty),
                 Err(e) => {
                     Err(Exception::new("IoError", e.to_string()).with_backtrace(ctx.backtrace()))
@@ -16,11 +16,11 @@ pub(super) fn register(ctx: &mut Context) {
             }
         }))
         .with_function(builtin_fn_v2!("setenv", |&ctx, var: str, value: str| {
-            env::set_var(var, value);
+            env::set_var(var.as_str(), value.as_str());
             Ok(Value::default())
         }))
         .with_function(builtin_fn_v2!("unsetenv", |&ctx, var: str| {
-            env::remove_var(var);
+            env::remove_var(var.as_str());
             Ok(Value::default())
         }));
 }

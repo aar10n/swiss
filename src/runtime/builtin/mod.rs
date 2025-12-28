@@ -1,3 +1,4 @@
+use crate::print::ansi::strip_ansi_codes;
 use crate::print::{DisplayString, PrettyString};
 use crate::source::{SourceSpan, Spanned};
 use ustr::Ustr;
@@ -7,8 +8,8 @@ pub(super) use super::exception::Exception;
 pub(super) use super::module::Module;
 pub(super) use super::name::{Function, Param};
 pub(super) use super::value::{
-    CastFrom, CastInto, Dim, Float, Integer, IterValue, Number, Numeric, Quantity, Ty, Tuple,
-    VRef, Value, ValueRef,
+    CastFrom, CastInto, Dim, Float, Integer, IterValue, Number, Numeric, Quantity, SharedStr,
+    Tuple, Ty, VRef, Value, ValueRef,
 };
 pub(super) use super::{Conversion, IoHandle, ModuleId, UserTy};
 
@@ -42,7 +43,7 @@ macro_rules! builtin_type_v2 {
     (int) => { crate::runtime::Integer };
     (float) => { crate::runtime::Float };
     (num) => { crate::runtime::Quantity };
-    (str) => { String };
+    (str) => { crate::runtime::SharedStr };
     (bool) => { bool };
     (fn) => { crate::runtime::Function };
     (iter) => { crate::runtime::Value };
@@ -385,7 +386,7 @@ pub fn register_builtin_module(ctx: &mut Context) {
                     }
                     names.sort();
                     names.dedup();
-                    let values = names.into_iter().map(Value::String).collect();
+                    let values = names.into_iter().map(Value::from).collect();
                     return Ok(Value::list(values));
                 }
             };
@@ -422,7 +423,7 @@ pub fn register_builtin_module(ctx: &mut Context) {
 
             names.sort();
             names.dedup();
-            let values = names.into_iter().map(Value::String).collect();
+            let values = names.into_iter().map(Value::from).collect();
             Ok(Value::list(values))
         }))
         .with_function(builtin_fn_v2!("typeof", |&ctx, v: any| {
@@ -449,7 +450,7 @@ pub fn register_builtin_module(ctx: &mut Context) {
             )))))
         }))
         .with_function(builtin_fn_v2!("str_new", |&_ctx| {
-            Ok(Value::String(String::new()))
+            Ok(Value::String(SharedStr::default()))
         }))
         .with_function(builtin_fn_v2!("iter_new", |&ctx, v: iter| {
             let iter = v.try_into_iter(ctx)?;
@@ -535,13 +536,10 @@ pub fn register_builtin_module(ctx: &mut Context) {
             Ok(Value::object(items))
         }))
         .with_function(builtin_fn_v2!("unit_new", |&ctx, name: str| {
-            let module_id = ctx
-                .active_module()
-                .map(|module| module.id)
-                .ok_or_else(|| {
-                    Exception::new("RuntimeError", "no active module".to_string())
-                        .with_backtrace(ctx.backtrace())
-                })?;
+            let module_id = ctx.active_module().map(|module| module.id).ok_or_else(|| {
+                Exception::new("RuntimeError", "no active module".to_string())
+                    .with_backtrace(ctx.backtrace())
+            })?;
             let unit = ctx
                 .modules
                 .resolve_unit_suffix_in(
@@ -555,10 +553,16 @@ pub fn register_builtin_module(ctx: &mut Context) {
             Ok(Value::Unit(unit.name.raw))
         }))
         .with_function(builtin_fn_v2!("to_string", |&ctx, v: any| {
-            Ok(v.plain_string(ctx))
+            match &v {
+                Value::String(s) => Ok(s.to_string()),
+                _ => {
+                    let raw = v.display_string(ctx);
+                    Ok(strip_ansi_codes(&raw))
+                }
+            }
         }))
         .with_function(builtin_fn_v2!("error", |&ctx, msg: str?| {
-            let message = msg.unwrap_or_default();
+            let message = msg.unwrap_or_default().to_string();
             Err::<Value, Exception>(
                 Exception::new("Error", message).with_backtrace(ctx.backtrace()),
             )

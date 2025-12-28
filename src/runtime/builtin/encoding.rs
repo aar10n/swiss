@@ -13,10 +13,10 @@ pub(super) fn register(ctx: &mut Context) {
         .unwrap()
         .with_function(builtin_fn_v2!("json_encode", |&ctx, value: any| {
             let json = value_to_json(ctx, &value)?;
-            Ok(Value::String(json.to_string()))
+            Ok(Value::from(json.to_string()))
         }))
         .with_function(builtin_fn_v2!("json_decode", |&ctx, text: str| {
-            let parsed: JsonValue = serde_json::from_str(&text).map_err(|e| {
+            let parsed: JsonValue = serde_json::from_str(text.as_str()).map_err(|e| {
                 Exception::new("ValueError", e.to_string()).with_backtrace(ctx.backtrace())
             })?;
             json_to_value(ctx, &parsed)
@@ -58,13 +58,17 @@ fn dispatch_encode(ctx: &mut Context, name: &str, value: Value) -> Result<Value,
     }
 }
 
-fn dispatch_decode(ctx: &mut Context, name: &str, text: String) -> Result<Value, Exception> {
+fn dispatch_decode(
+    ctx: &mut Context,
+    name: &str,
+    text: crate::runtime::SharedStr,
+) -> Result<Value, Exception> {
     let key: Ustr = name.into();
     let (_, decode_fn) = ctx.encodings.get(&key).cloned().ok_or_else(|| {
         Exception::new("NameError", format!("encoding '{}' not registered", name))
             .with_backtrace(ctx.backtrace())
     })?;
-    interp::call_function(ctx, &decode_fn, vec![Value::String(text)])
+    interp::call_function(ctx, &decode_fn, vec![Value::from(text)])
 }
 
 fn validate_encode_fn(ctx: &Context, func: &Function) -> Result<(), Exception> {
@@ -113,7 +117,7 @@ fn value_to_json(ctx: &Context, value: &Value) -> Result<JsonValue, Exception> {
     Ok(match value {
         Value::Empty => JsonValue::Null,
         Value::Boolean(b) => JsonValue::Bool(*b),
-        Value::String(s) => JsonValue::String(s.clone()),
+        Value::String(s) => JsonValue::String(s.to_string()),
         Value::Quantity(q) => {
             if !q.is_dimless() {
                 return Err(Exception::new(
@@ -162,7 +166,7 @@ fn json_to_value(ctx: &Context, value: &JsonValue) -> Result<Value, Exception> {
     Ok(match value {
         JsonValue::Null => Value::Empty,
         JsonValue::Bool(b) => Value::Boolean(*b),
-        JsonValue::String(s) => Value::String(s.clone()),
+        JsonValue::String(s) => Value::from(s.clone()),
         JsonValue::Number(n) => Value::Quantity(Quantity::new(
             number_from_json(ctx, n)?,
             crate::runtime::Dim::none(),

@@ -1,4 +1,6 @@
-use super::{Context, Dim, Exception, Float, Integer, Number, Quantity, VRef, Value, ValueRef};
+use super::{
+    Context, Dim, Exception, Float, Integer, Number, Quantity, SharedStr, VRef, Value, ValueRef,
+};
 
 use crate::ast::{BinaryCoercion, Coercion, FloatConversion};
 use crate::print::ansi::{
@@ -298,6 +300,20 @@ impl CastInto<String> for Value {
     fn cast(ctx: &Context, value: Value) -> Result<String, Exception> {
         match value {
             Value::Ref(r) => CastInto::<String>::cast(ctx, r.borrow().clone()),
+            Value::String(s) => Ok(s.to_string()),
+            value => Err(Exception::new(
+                "TypeError",
+                format!("expected string, found {}", value.ty().pretty_string(ctx)),
+            )
+            .with_backtrace(ctx.backtrace())),
+        }
+    }
+}
+
+impl CastInto<SharedStr> for Value {
+    fn cast(ctx: &Context, value: Value) -> Result<SharedStr, Exception> {
+        match value {
+            Value::Ref(r) => CastInto::<SharedStr>::cast(ctx, r.borrow().clone()),
             Value::String(s) => Ok(s),
             value => Err(Exception::new(
                 "TypeError",

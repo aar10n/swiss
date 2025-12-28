@@ -1,0 +1,111 @@
+INCLUDE: prelude.ch
+
+TEST: String length ascii
+INPUT: len("hello")
+EXPECT: 5
+
+TEST: String length unicode
+INPUT: len("aΩ😀")
+EXPECT: 3
+
+TEST: String equality
+INPUT: "hi" == "hi"
+EXPECT: true
+
+TEST: String slice ascii
+INPUT: "abcdef"[1:4]
+EXPECT: "bcd"
+
+TEST: String slice unicode
+INPUT: "aΩ😀b"[1:3]
+EXPECT: "Ω😀"
+
+TEST: String slice negative indices
+INPUT: "abcdef"[-3:-1]
+EXPECT: "de"
+
+TEST: String slice empty result
+INPUT: "abcd"[3:1]
+EXPECT: ""
+
+TEST: String reverse unicode
+INPUT: reverse("abΩ")
+EXPECT: "Ωba"
+
+TEST: String index ascii
+INPUT: "hello"[1]
+EXPECT: "e"
+
+TEST: String index unicode
+INPUT: "aΩ😀b"[1]
+EXPECT: "Ω"
+
+TEST: String index emoji
+INPUT: "aΩ😀b"[2]
+EXPECT: "😀"
+
+TEST: String index out of range
+INPUT: "abc"[3]
+EXPECT_ERROR: Exception: string index out of range: 3
+
+TEST: String index negative
+INPUT: "abc"[-1]
+EXPECT_ERROR: Exception: index must be non-negative
+
+TEST: String iteration unicode
+INPUT: {
+  s = "aΩ😀"
+  res = []
+  for c := range s {
+    res = append(res, c)
+  }
+  res
+}
+EXPECT: ["a", "Ω", "😀"]
+
+TEST: String index type error
+INPUT: "abc"[1.2]
+EXPECT_ERROR: Exception: index must be an integer, found float
+
+TEST: String interpolation simple
+INPUT: {
+  name = "world"
+  "hello ${name}"
+}
+EXPECT: "hello world"
+
+TEST: String interpolation expression
+INPUT: "sum=${1 + 2}"
+EXPECT: "sum=3"
+
+TEST: String interpolation unicode
+INPUT: "Ω=${\"Ω\"}"
+EXPECT: "Ω=Ω"
+
+TEST: String interpolation escape
+INPUT: "\${1}"
+EXPECT: "${1}"
+
+TEST: Multiline string dedent
+INPUT:
+"""
+\thello
+\tworld
+"""
+EXPECT: "hello\nworld\n"
+
+TEST: Multiline string interpolation
+INPUT: {
+  name = "swiss"
+  """
+    hello ${name}
+    Ω
+  """
+}
+EXPECT: "hello swiss\nΩ\n"
+
+TEST: Multiline string no initial newline
+INPUT:
+"""line1
+line2"""
+EXPECT: "line1\nline2"

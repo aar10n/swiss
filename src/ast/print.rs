@@ -632,6 +632,20 @@ impl PrettyPrint<Context> for Expr {
             ExprKind::Ident(ident) => ident.pretty_print(out, ctx, level),
             ExprKind::Number(number) => number.pretty_print(out, ctx, level),
             ExprKind::String(string) => write!(out, "{STRING}\"{}\"{RESET}", string),
+            ExprKind::InterpolatedString(parts) => {
+                write!(out, "{STRING}\"")?;
+                for part in parts {
+                    match part {
+                        StringPart::Text(text) => write!(out, "{}", text)?,
+                        StringPart::Expr(expr) => {
+                            write!(out, "${{")?;
+                            expr.pretty_print(out, ctx, level)?;
+                            write!(out, "}}")?;
+                        }
+                    }
+                }
+                write!(out, "\"{RESET}")
+            }
             ExprKind::Boolean(boolean) => write!(out, "{NUMBER}{}{RESET}", boolean),
             ExprKind::Unit(unit) => unit.pretty_print(out, ctx, level),
             ExprKind::Type(ty) => ty.pretty_print(out, ctx, level),

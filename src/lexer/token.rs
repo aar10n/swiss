@@ -12,6 +12,7 @@ pub enum Token {
     Float(String),
     Bool(bool),
     String(String),
+    InterpolatedString(Vec<StringPart>),
     Keyword(Keyword),
     Operator(Ustr),
     Identifier(Ustr),
@@ -34,6 +35,12 @@ pub enum Token {
     EndOfFile,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum StringPart {
+    Text(String),
+    Expr { source: String, span: SourceSpan },
+}
+
 impl Token {
     pub fn operator(s: &str) -> Self {
         Token::Operator(Ustr::from(s))
@@ -52,7 +59,7 @@ impl Token {
     }
 
     pub fn is_string(&self) -> bool {
-        matches!(self, Token::String(_))
+        matches!(self, Token::String(_) | Token::InterpolatedString(_))
     }
 
     pub fn is_directive(&self) -> bool {
@@ -105,6 +112,7 @@ impl Display for Token {
             Token::Float(s) => write!(f, "{}", s),
             Token::Bool(b) => write!(f, "{}", b),
             Token::String(s) => write!(f, "{}", s),
+            Token::InterpolatedString(_) => write!(f, "<interpolated string>"),
             Token::Keyword(k) => write!(f, "{:?}", k),
             Token::Operator(op) => write!(f, "{}", op),
             Token::Identifier(s) => write!(f, "{}", s),
@@ -141,6 +149,16 @@ impl<Ctx> PrettyPrint<Ctx> for Token {
             Token::Float(s) => write!(out, "Float {NUMBER}{}{RESET}", s),
             Token::Bool(b) => write!(out, "Bool {NUMBER}{}{RESET}", b),
             Token::String(s) => write!(out, "String {STRING}{}{RESET}", s),
+            Token::InterpolatedString(parts) => {
+                write!(out, "String {STRING}\"")?;
+                for part in parts {
+                    match part {
+                        StringPart::Text(text) => write!(out, "{}", text)?,
+                        StringPart::Expr { source, .. } => write!(out, "${{{}}}", source)?,
+                    }
+                }
+                write!(out, "\"{RESET}")
+            }
             Token::Keyword(k) => write!(out, "Keyword {KEYWORD}{:?}{RESET}", k),
             Token::Operator(op) => write!(out, "Operator {OPERATOR}{}{RESET}", op),
             Token::Identifier(s) => write!(out, "Identifier {KEYWORD}{}{RESET}", s),

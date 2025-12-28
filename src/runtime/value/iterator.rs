@@ -1,4 +1,4 @@
-use super::{Context, Exception, List, Object, Tuple, Value};
+use super::{Context, Exception, List, Object, SharedStr, Tuple, Value};
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -180,7 +180,7 @@ impl Iterable for ObjectIterator {
             })?;
 
             let tuple = Value::Tuple(Tuple::new(SmallVec::from_vec(vec![
-                Box::new(Value::String(key.to_string())),
+                Box::new(Value::from(key.to_string())),
                 Box::new(value.clone()),
             ])));
 
@@ -203,32 +203,39 @@ impl Iterable for ObjectIterator {
 // MARK: StringIterator
 
 pub struct StringIterator {
-    chars: Vec<char>,
-    index: usize,
+    string: SharedStr,
+    byte_index: usize,
+    byte_len: usize,
 }
 
 impl StringIterator {
-    pub fn new(string: String) -> Self {
+    pub fn new(string: SharedStr) -> Self {
         Self {
-            chars: string.chars().collect(),
-            index: 0,
+            byte_len: string.as_str().len(),
+            string,
+            byte_index: 0,
         }
     }
 }
 
 impl Iterable for StringIterator {
     fn next(&mut self, _ctx: &mut Context) -> Result<Option<Value>, Exception> {
-        if self.index < self.chars.len() {
-            let ch = self.chars[self.index];
-            self.index += 1;
-            Ok(Some(Value::String(ch.to_string())))
+        if self.byte_index < self.byte_len {
+            let slice = &self.string.as_str()[self.byte_index..];
+            let ch = slice.chars().next().expect("slice is non-empty");
+            let start = self.byte_index;
+            let end = start + ch.len_utf8();
+            self.byte_index = end;
+            Ok(Some(Value::String(
+                self.string.slice_bytes_relative(start, end),
+            )))
         } else {
             Ok(None)
         }
     }
 
     fn size_hint(&self) -> Option<usize> {
-        Some(self.chars.len() - self.index)
+        Some(self.string.as_str()[self.byte_index..].chars().count())
     }
 }
 

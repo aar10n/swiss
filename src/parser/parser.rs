@@ -1,6 +1,7 @@
 use super::{DirectiveError, ParseError, ParseResult, ParserConfig, SyntaxError, ValueError};
 use crate::ast::*;
-use crate::lexer::{token, Keyword, Token};
+use crate::lexer::{self, token, Keyword, Token};
+use crate::lexer::token::StringPart as TokenStringPart;
 use crate::print::{PrettyPrint, PrettyString};
 use crate::runtime::{self as rt, Context};
 use crate::source::{SourceId, SourcePos, Spanned};
@@ -153,6 +154,17 @@ impl<'a> Parser<'a> {
             pending_builtin_wrapper: false,
             pending_type_decl: None,
         }
+    }
+
+    fn new_with_pos(
+        ctx: &'a mut rt::Module,
+        tokens: &'a [(Token, SourceSpan)],
+        pos: SourcePos,
+    ) -> Self {
+        let mut parser = Parser::new(ctx, tokens);
+        parser.pos = pos.offset;
+        parser.source_id = pos.source_id;
+        parser
     }
 
     // module ::= (_ <item> _) ** '\n'
@@ -1495,8 +1507,7 @@ impl<'a> Parser<'a> {
                 let number = parser.parse_number()?;
                 Ok(Expr::number(number))
             } else if parser.peek_token().is_string() {
-                let string = parser.parse_string()?.into_value();
-                Ok(Expr::string(string))
+                parser.parse_string_expr()
             } else if let Some((Token::Bool(b), _)) = parser.consume_if(Token::is_bool) {
                 Ok(Expr::boolean(b))
             } else if is_unit_suffix(parser.peek_token(), &parser.ctx) {
@@ -1938,6 +1949,55 @@ impl<'a> Parser<'a> {
             let (token, _) = parser.next_token()?;
             match token {
                 Token::String(s) => Ok(Spanned::from(s)),
+                Token::InterpolatedString(_) => Err(SyntaxError::new(
+                    "interpolated string not allowed here",
+                    parser.position(),
+                )
+                .into()),
+                _ => Err(SyntaxError::new("expected string", parser.position()).into()),
+            }
+        })
+    }
+
+    fn parse_string_expr(&mut self) -> ParseResult<Expr> {
+        self.trace("parse_string_expr", |parser| {
+            let (token, span) = parser.next_token()?;
+            match token {
+                Token::String(s) => Ok(Expr::string(s)),
+                Token::InterpolatedString(parts) => {
+                    let mut expr_parts = Vec::with_capacity(parts.len());
+                    for part in parts {
+                        match part {
+                            TokenStringPart::Text(text) => {
+                                expr_parts.push(StringPart::Text(text));
+                            }
+                            TokenStringPart::Expr { source, span } => {
+                                let tokens = lexer::lex_with_offset(
+                                    span.source_id,
+                                    &source,
+                                    span.start,
+                                )
+                                .map_err(|err| SyntaxError::new(err.msg, err.pos))?;
+                                let mut sub = Parser::new_with_pos(
+                                    parser.ctx,
+                                    &tokens,
+                                    SourcePos::new(span.source_id, span.start),
+                                );
+                                let expr = sub.parse_expr(isize::MIN)?;
+                                sub.consume_space(true);
+                                if !sub.peek_token().is_eof() {
+                                    return Err(SyntaxError::new(
+                                        "unexpected token in interpolation",
+                                        sub.position(),
+                                    )
+                                    .into());
+                                }
+                                expr_parts.push(StringPart::Expr(expr.into()));
+                            }
+                        }
+                    }
+                    Ok(Expr::interpolated_string(expr_parts).with_span(span))
+                }
                 _ => Err(SyntaxError::new("expected string", parser.position()).into()),
             }
         })

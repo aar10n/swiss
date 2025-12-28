@@ -92,7 +92,7 @@ pub(super) fn register(ctx: &mut Context) {
 
             let as_usize = |value: Value| -> Result<usize, Exception> {
                 match value {
-                    Value::Quantity(q) if q.is_dimless() => q
+                    Value::Quantity(q) if q.is_dimless() && q.is_int() => q
                         .number
                         .into_int(ctx)
                         .map_err(|e| e.with_backtrace(ctx.backtrace()))?
@@ -127,6 +127,18 @@ pub(super) fn register(ctx: &mut Context) {
                             .with_backtrace(ctx.backtrace())
                     })?
                 }
+                Value::String(s) => {
+                    let idx = as_usize(idx_value)?;
+                    let len = s.len_chars();
+                    if idx >= len {
+                        return Err(Exception::new(
+                            "IndexError",
+                            format!("string index out of range: {}", idx),
+                        )
+                        .with_backtrace(ctx.backtrace()));
+                    }
+                    Value::String(s.slice_chars(idx, idx + 1))
+                }
                 Value::Object(object) => {
                     let key = match idx_value {
                         Value::String(s) => s,
@@ -155,7 +167,7 @@ pub(super) fn register(ctx: &mut Context) {
                         }
                     };
 
-                    let key_ustr = Ustr::from(&key);
+                    let key_ustr = Ustr::from(key.as_str());
                     object
                         .borrow()
                         .iter()
@@ -291,7 +303,7 @@ pub(super) fn register(ctx: &mut Context) {
                                 .with_backtrace(ctx.backtrace())
                             })?;
 
-                        ty.get_method(method_name.clone().into()).ok_or_else(|| {
+                        ty.get_method(Ustr::from(method_name.as_str())).ok_or_else(|| {
                             Exception::new(
                                 "NameError",
                                 format!("type '{}' has no method '{}'", type_name, method_name),

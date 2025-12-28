@@ -1,6 +1,6 @@
 use super::charset::CharSet;
 use super::iter::PeekableN;
-use super::token::{Token, KEYWORDS};
+use super::token::{StringPart, Token, KEYWORDS};
 use super::{LexError, LexResult};
 use crate::runtime::Context;
 use crate::source::{SourceFile, SourceId, SourcePos, SourceSpan};
@@ -58,12 +58,25 @@ pub struct Lexer<'a> {
 
 impl<'a> Lexer<'a> {
     pub fn new(source_id: SourceId, source: &'a str) -> Lexer<'a> {
+        Self::new_with_offset(source_id, source, 0, true)
+    }
+
+    pub fn new_with_offset(
+        source_id: SourceId,
+        source: &'a str,
+        offset: usize,
+        start_of_line: bool,
+    ) -> Lexer<'a> {
         Lexer {
             source_id,
             source_raw: source,
             chars: PeekableN::new(source.chars(), 2),
-            state: LexerState::StartOfLine,
-            offset: 0,
+            state: if start_of_line {
+                LexerState::StartOfLine
+            } else {
+                LexerState::MiddleOfLine
+            },
+            offset,
             trace_on: std::env::var("TRACE_LEXER").is_ok(),
         }
     }
@@ -245,10 +258,20 @@ impl<'a> Lexer<'a> {
     }
 
     fn lex_string(&mut self) -> LexResult<Token> {
-        // "string"
+        // "string" or """multiline"""
         self.take_one().unwrap(); // "
+        let multiline = if self.peek(0) == '"' && self.peek(1) == '"' {
+            self.take_one();
+            self.take_one();
+            true
+        } else {
+            false
+        };
 
         let mut value = String::new();
+        let mut parts: Vec<StringPart> = Vec::new();
+        let mut saw_interpolation = false;
+        let mut terminated = false;
         while let Some(ch) = self.take_one() {
             if ch == '\\' {
                 let err_pos = self.position();
@@ -266,6 +289,7 @@ impl<'a> Lexer<'a> {
                     '0' => '\0',
                     '\\' => '\\',
                     '"' => '"',
+                    '$' => '$',
                     'x' => {
                         let h1 = self.take_one().ok_or_else(|| {
                             LexError::new("unexpected end of input", self.position())
@@ -296,14 +320,190 @@ impl<'a> Lexer<'a> {
                     _ => return Err(LexError::new("invalid escape sequence", err_pos)),
                 };
                 value.push(ch);
+            } else if ch == '$' && self.peek(0) == '{' {
+                self.take_one().unwrap(); // {
+                if !value.is_empty() {
+                    parts.push(StringPart::Text(std::mem::take(&mut value)));
+                }
+                saw_interpolation = true;
+
+                let expr_start = self.offset;
+                let mut expr = String::new();
+                let mut depth = 0usize;
+                let mut in_string = false;
+                let mut in_triple_string = false;
+                let mut in_comment = false;
+                let mut string_escape = false;
+
+                loop {
+                    let mut ch = self.take_one().ok_or_else(|| {
+                        LexError::new("unexpected end of input", self.position())
+                    })?;
+                    if ch == '\\' {
+                        let err_pos = self.position();
+                        let next = self
+                            .take_one()
+                            .ok_or_else(|| LexError::new("unexpected end of input", self.position()))?;
+                        ch = match next {
+                            'n' => '\n',
+                            'r' => '\r',
+                            't' => '\t',
+                            'a' => '\u{07}',
+                            'b' => '\u{08}',
+                            'f' => '\u{0C}',
+                            'v' => '\u{0B}',
+                            '0' => '\0',
+                            '\\' => '\\',
+                            '"' => '"',
+                            '$' => '$',
+                            'x' => {
+                                let h1 = self.take_one().ok_or_else(|| {
+                                    LexError::new("unexpected end of input", self.position())
+                                })?;
+                                let h2 = self.take_one().ok_or_else(|| {
+                                    LexError::new("unexpected end of input", self.position())
+                                })?;
+                                let code = match (hex_value(h1), hex_value(h2)) {
+                                    (Some(a), Some(b)) => (a << 4) | b,
+                                    _ => return Err(LexError::new("invalid escape sequence", err_pos)),
+                                };
+                                char::from_u32(code as u32).unwrap()
+                            }
+                            'u' => {
+                                let mut code: u32 = 0;
+                                for shift in [12, 8, 4, 0] {
+                                    let h = self.take_one().ok_or_else(|| {
+                                        LexError::new("unexpected end of input", self.position())
+                                    })?;
+                                    let Some(val) = hex_value(h) else {
+                                        return Err(LexError::new("invalid escape sequence", err_pos));
+                                    };
+                                    code |= (val as u32) << shift;
+                                }
+                                char::from_u32(code)
+                                    .ok_or_else(|| LexError::new("invalid escape sequence", err_pos))?
+                            }
+                            _ => return Err(LexError::new("invalid escape sequence", err_pos)),
+                        };
+                    }
+
+                    if in_comment {
+                        expr.push(ch);
+                        if ch == '\n' {
+                            in_comment = false;
+                        }
+                        continue;
+                    }
+
+                    if in_triple_string {
+                        if ch == '"' && self.peek(0) == '"' && self.peek(1) == '"' {
+                            in_triple_string = false;
+                            expr.push(ch);
+                            expr.push(self.take_one().unwrap());
+                            expr.push(self.take_one().unwrap());
+                            continue;
+                        }
+                        expr.push(ch);
+                        continue;
+                    }
+
+                    if in_string {
+                        if string_escape {
+                            string_escape = false;
+                        } else if ch == '\\' {
+                            string_escape = true;
+                        } else if ch == '"' {
+                            in_string = false;
+                        }
+                        expr.push(ch);
+                        continue;
+                    }
+
+                    if ch == '"' {
+                        if self.peek(0) == '"' && self.peek(1) == '"' {
+                            in_triple_string = true;
+                            expr.push(ch);
+                            expr.push(self.take_one().unwrap());
+                            expr.push(self.take_one().unwrap());
+                        } else {
+                            in_string = true;
+                            expr.push(ch);
+                        }
+                        continue;
+                    }
+
+                    if ch == ';' {
+                        in_comment = true;
+                        expr.push(ch);
+                        continue;
+                    }
+
+                    if ch == '{' {
+                        depth += 1;
+                        expr.push(ch);
+                        continue;
+                    }
+
+                    if ch == '}' {
+                        if depth == 0 {
+                            let expr_end = self.offset - ch.len_utf8();
+                            let span = SourceSpan::new(self.source_id, expr_start, expr_end);
+                            parts.push(StringPart::Expr { source: expr, span });
+                            break;
+                        }
+                        depth -= 1;
+                        expr.push(ch);
+                        continue;
+                    }
+
+                    expr.push(ch);
+                }
             } else if ch == '"' {
-                break;
+                if multiline && self.peek(0) == '"' && self.peek(1) == '"' {
+                    self.take_one().unwrap();
+                    self.take_one().unwrap();
+                    terminated = true;
+                    break;
+                }
+                if !multiline {
+                    terminated = true;
+                    break;
+                }
+                value.push(ch);
             } else {
                 value.push(ch);
             }
         }
 
-        Ok(Token::String(value))
+        if !terminated {
+            return Err(LexError::new(
+                if multiline {
+                    "unterminated multiline string"
+                } else {
+                    "unterminated string"
+                },
+                self.position(),
+            ));
+        }
+
+        if saw_interpolation {
+            if !value.is_empty() {
+                parts.push(StringPart::Text(value));
+            }
+            if multiline {
+                normalize_multiline_string_parts(&mut parts);
+            }
+            Ok(Token::InterpolatedString(parts))
+        } else if multiline {
+            let mut parts = vec![StringPart::Text(value)];
+            normalize_multiline_string_parts(&mut parts);
+            match parts.pop() {
+                Some(StringPart::Text(value)) => Ok(Token::String(value)),
+                _ => Ok(Token::String(String::new())),
+            }
+        } else {
+            Ok(Token::String(value))
+        }
     }
 
     fn lex_directive(&mut self) -> LexResult<Token> {
@@ -470,6 +670,160 @@ impl<'a> Lexer<'a> {
 
 fn is_decimal_digit(ch: char) -> bool {
     ch.is_digit(10)
+}
+
+fn normalize_multiline_string_parts(parts: &mut Vec<StringPart>) {
+    strip_first_newline(parts);
+    let min_indent = min_indentation(parts);
+    if min_indent > 0 {
+        strip_indentation(parts, min_indent);
+    }
+    parts.retain(|part| match part {
+        StringPart::Text(text) => !text.is_empty(),
+        StringPart::Expr { .. } => true,
+    });
+}
+
+fn strip_first_newline(parts: &mut Vec<StringPart>) {
+    let mut idx = 0;
+    while idx < parts.len() {
+        match &mut parts[idx] {
+            StringPart::Text(text) => {
+                if text.is_empty() {
+                    idx += 1;
+                    continue;
+                }
+                if text.starts_with('\n') {
+                    text.remove(0);
+                }
+                if text.is_empty() {
+                    parts.remove(idx);
+                }
+                break;
+            }
+            StringPart::Expr { .. } => break,
+        }
+    }
+}
+
+fn min_indentation(parts: &[StringPart]) -> usize {
+    let mut min_indent: Option<usize> = None;
+    let mut line_indent = 0usize;
+    let mut at_line_start = true;
+    let mut line_has_content = false;
+
+    for part in parts {
+        match part {
+            StringPart::Text(text) => {
+                for ch in text.chars() {
+                    if at_line_start {
+                        if ch == '\n' {
+                            finish_line(
+                                &mut min_indent,
+                                &mut line_indent,
+                                &mut line_has_content,
+                                &mut at_line_start,
+                            );
+                            continue;
+                        }
+                        if is_indent_char(ch) {
+                            line_indent += 1;
+                            continue;
+                        }
+                        line_has_content = true;
+                        at_line_start = false;
+                    }
+
+                    if ch == '\n' {
+                        finish_line(
+                            &mut min_indent,
+                            &mut line_indent,
+                            &mut line_has_content,
+                            &mut at_line_start,
+                        );
+                    } else {
+                        line_has_content = true;
+                        at_line_start = false;
+                    }
+                }
+            }
+            StringPart::Expr { .. } => {
+                if at_line_start {
+                    line_has_content = true;
+                    at_line_start = false;
+                } else {
+                    line_has_content = true;
+                }
+            }
+        }
+    }
+
+    if line_has_content {
+        let value = line_indent;
+        min_indent = Some(min_indent.map_or(value, |min| min.min(value)));
+    }
+
+    min_indent.unwrap_or(0)
+}
+
+fn finish_line(
+    min_indent: &mut Option<usize>,
+    line_indent: &mut usize,
+    line_has_content: &mut bool,
+    at_line_start: &mut bool,
+) {
+    if *line_has_content {
+        let value = *line_indent;
+        *min_indent = Some(min_indent.map_or(value, |min| min.min(value)));
+    }
+    *line_indent = 0;
+    *line_has_content = false;
+    *at_line_start = true;
+}
+
+fn strip_indentation(parts: &mut Vec<StringPart>, indent: usize) {
+    let mut at_line_start = true;
+    let mut remaining = indent;
+
+    for part in parts.iter_mut() {
+        match part {
+            StringPart::Text(text) => {
+                let mut out = String::new();
+                for ch in text.chars() {
+                    if at_line_start {
+                        if ch == '\n' {
+                            out.push(ch);
+                            remaining = indent;
+                            continue;
+                        }
+                        if remaining > 0 && is_indent_char(ch) {
+                            remaining -= 1;
+                            continue;
+                        }
+                        at_line_start = false;
+                        out.push(ch);
+                    } else {
+                        out.push(ch);
+                        if ch == '\n' {
+                            at_line_start = true;
+                            remaining = indent;
+                        }
+                    }
+                }
+                *text = out;
+            }
+            StringPart::Expr { .. } => {
+                if at_line_start {
+                    at_line_start = false;
+                    remaining = indent;
+                }
+            }
+        }
+    }
+}
+
+fn is_indent_char(ch: char) -> bool {
+    ch == ' ' || ch == '\t'
 }
 
 fn hex_value(ch: char) -> Option<u8> {

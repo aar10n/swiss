@@ -4,7 +4,7 @@ use crate::runtime::{Context, Exception, Handle, IoHandle, Module, UserTy, Value
 
 pub(super) fn write_impl(ctx: &mut Context, io: IoHandle, v: Value) -> Result<Value, Exception> {
     let content = match &v {
-        Value::String(s) => s.clone(),
+        Value::String(s) => s.to_string(),
         _ => v.display_string(ctx),
     };
     io.write_str(&content)
@@ -14,7 +14,7 @@ pub(super) fn write_impl(ctx: &mut Context, io: IoHandle, v: Value) -> Result<Va
 
 pub(super) fn writeln_impl(ctx: &mut Context, io: IoHandle, v: Value) -> Result<Value, Exception> {
     let mut content = match &v {
-        Value::String(s) => s.clone(),
+        Value::String(s) => s.to_string(),
         _ => v.display_string(ctx),
     };
     content.push('\n');

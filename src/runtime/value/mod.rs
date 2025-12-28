@@ -3,6 +3,7 @@ mod iterator;
 mod number;
 mod quantity;
 mod reference;
+mod shared_str;
 mod ty;
 mod value;
 
@@ -12,6 +13,7 @@ pub use iterator::{IterValue, Iterable};
 pub use number::*;
 pub use quantity::*;
 pub use reference::*;
+pub use shared_str::SharedStr;
 pub use ty::*;
 pub use value::*;
 

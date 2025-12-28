@@ -5,7 +5,7 @@ use super::super::{
 use super::iterator::{
     Iterable, IterValue, ListIterator, ObjectIterator, StringIterator, TupleIterator,
 };
-use super::{Dim, Number, Quantity, Ty};
+use super::{Dim, Number, Quantity, SharedStr, Ty};
 use super::super::UserTy;
 pub use super::{VRef, ValueRef};
 
@@ -327,7 +327,7 @@ pub enum Value {
     Tuple(Tuple),
     Iter(IterValue),
     Quantity(Quantity),
-    String(String),
+    String(SharedStr),
     Boolean(bool),
     Function(Function),
     UserType(UserTy),
@@ -504,6 +504,12 @@ impl From<ValueRef> for Value {
 
 impl From<String> for Value {
     fn from(value: String) -> Self {
+        Value::String(SharedStr::from(value))
+    }
+}
+
+impl From<SharedStr> for Value {
+    fn from(value: SharedStr) -> Self {
         Value::String(value)
     }
 }

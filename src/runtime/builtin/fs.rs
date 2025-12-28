@@ -22,13 +22,13 @@ pub(super) fn register(ctx: &mut Context) {
             Ok(Value::Boolean(f.is_open()))
         }))
         .with_function(builtin_fn_v2!("read_all", |&ctx, f: file| {
-            f.read_all().map(Value::String).map_err(|e| {
+            f.read_all().map(Value::from).map_err(|e| {
                 Exception::new("IoError", e.to_string()).with_backtrace(ctx.backtrace())
             })
         }))
         .with_function(builtin_fn_v2!("write", |&ctx, f: file, v: any| {
             let content = match &v {
-                Value::String(s) => s.clone(),
+                Value::String(s) => s.to_string(),
                 _ => v.display_string(ctx),
             };
             f.write_str(&content)
@@ -39,7 +39,7 @@ pub(super) fn register(ctx: &mut Context) {
         }))
         .with_function(builtin_fn_v2!("writeln", |&ctx, f: file, v: any| {
             let content = match &v {
-                Value::String(s) => s.clone(),
+                Value::String(s) => s.to_string(),
                 _ => v.display_string(ctx),
             };
             f.write_line(&content)
@@ -61,12 +61,14 @@ pub(super) fn register(ctx: &mut Context) {
         .new_submodule("fs")
         .unwrap()
         .with_function(builtin_fn_v2!("open", |&ctx, path: str, mode: str?| {
-            let mode = mode.unwrap_or_else(|| "r".to_string());
+            let mode = mode
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "r".to_string());
             let result = match mode.as_str() {
-                "r" => FileHandle::open_read(&path),
-                "w" => FileHandle::open_write(&path),
-                "a" => FileHandle::open_append(&path),
-                "r+" => FileHandle::open_read_write(&path),
+                "r" => FileHandle::open_read(path.as_str()),
+                "w" => FileHandle::open_write(path.as_str()),
+                "a" => FileHandle::open_append(path.as_str()),
+                "r+" => FileHandle::open_read_write(path.as_str()),
                 _ => {
                     return Err(Exception::new(
                         "ValueError",
@@ -81,7 +83,7 @@ pub(super) fn register(ctx: &mut Context) {
             }
         }))
         .with_function(builtin_fn_v2!("open_write", |&ctx, path: str| {
-            match FileHandle::open_write(&path) {
+            match FileHandle::open_write(path.as_str()) {
                 Ok(file) => Ok(wrap_file(file)),
                 Err(e) => {
                     Err(Exception::new("IoError", e.to_string()).with_backtrace(ctx.backtrace()))
@@ -89,7 +91,7 @@ pub(super) fn register(ctx: &mut Context) {
             }
         }))
         .with_function(builtin_fn_v2!("open_append", |&ctx, path: str| {
-            match FileHandle::open_append(&path) {
+            match FileHandle::open_append(path.as_str()) {
                 Ok(file) => Ok(wrap_file(file)),
                 Err(e) => {
                     Err(Exception::new("IoError", e.to_string()).with_backtrace(ctx.backtrace()))
@@ -97,7 +99,7 @@ pub(super) fn register(ctx: &mut Context) {
             }
         }))
         .with_function(builtin_fn_v2!("open_read_write", |&ctx, path: str| {
-            match FileHandle::open_read_write(&path) {
+            match FileHandle::open_read_write(path.as_str()) {
                 Ok(file) => Ok(wrap_file(file)),
                 Err(e) => {
                     Err(Exception::new("IoError", e.to_string()).with_backtrace(ctx.backtrace()))
@@ -106,7 +108,7 @@ pub(super) fn register(ctx: &mut Context) {
         }))
         .with_function(builtin_fn_v2!("listdir", |&ctx, path: str?| {
             let path = match path {
-                Some(path) => PathBuf::from(path),
+                Some(path) => PathBuf::from(path.as_str()),
                 None => env::current_dir()
                     .map_err(|e| Exception::new("IoError", e.to_string()).with_backtrace(ctx.backtrace()))?,
             };
@@ -119,7 +121,7 @@ pub(super) fn register(ctx: &mut Context) {
                     Exception::new("IoError", e.to_string()).with_backtrace(ctx.backtrace())
                 })?;
                 let name = entry.file_name().to_string_lossy().into_owned();
-                values.push(Value::String(name));
+                values.push(Value::from(name));
             }
             Ok(Value::list(values))
         }))
@@ -130,10 +132,10 @@ pub(super) fn register(ctx: &mut Context) {
             Ok(cwd.to_string_lossy().into_owned())
         }))
         .with_function(builtin_fn_v2!("exists", |&ctx, path: str| {
-            Ok(Path::new(&path).exists())
+            Ok(Path::new(path.as_str()).exists())
         }))
         .with_function(builtin_fn_v2!("mkdir", |&ctx, path: str, recursive: bool?| {
-            let path_ref = Path::new(&path);
+            let path_ref = Path::new(path.as_str());
             if path_ref.exists() {
                 if path_ref.is_dir() {
                     return Ok(Value::Boolean(false));
@@ -155,7 +157,7 @@ pub(super) fn register(ctx: &mut Context) {
                 .map_err(|e| Exception::new("IoError", e.to_string()).with_backtrace(ctx.backtrace()))
         }))
         .with_function(builtin_fn_v2!("remove", |&ctx, path: str| {
-            let path_ref = Path::new(&path);
+            let path_ref = Path::new(path.as_str());
             let result = if path_ref.is_dir() {
                 fs::remove_dir(path_ref)
             } else {
@@ -172,25 +174,25 @@ pub(super) fn register(ctx: &mut Context) {
         .new_submodule("path")
         .unwrap()
         .with_function(builtin_fn_v2!("join", |&ctx, a: str, b: str| {
-            let joined = PathBuf::from(&a).join(&b);
+            let joined = PathBuf::from(a.as_str()).join(b.as_str());
             Ok(joined.to_string_lossy().into_owned())
         }))
         .with_function(builtin_fn_v2!("dirname", |&ctx, path: str| {
-            let parent = Path::new(&path)
+            let parent = Path::new(path.as_str())
                 .parent()
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_else(|| ".".to_string());
             Ok(parent)
         }))
         .with_function(builtin_fn_v2!("basename", |&ctx, path: str| {
-            let base = Path::new(&path)
+            let base = Path::new(path.as_str())
                 .file_name()
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_default();
             Ok(base)
         }))
         .with_function(builtin_fn_v2!("extname", |&ctx, path: str| {
-            Ok(Path::new(&path)
+            Ok(Path::new(path.as_str())
                 .extension()
                 .map(|ext| ext.to_string_lossy().into_owned())
                 .unwrap_or_default())
@@ -200,7 +202,7 @@ pub(super) fn register(ctx: &mut Context) {
             let mut absolute = false;
             let mut prefix: Option<String> = None;
 
-            for comp in Path::new(&path).components() {
+            for comp in Path::new(path.as_str()).components() {
                 match comp {
                     Component::Prefix(p) => {
                         prefix = Some(p.as_os_str().to_string_lossy().into_owned());
@@ -239,6 +241,6 @@ pub(super) fn register(ctx: &mut Context) {
             Ok(normalized.to_string_lossy().into_owned())
         }))
         .with_function(builtin_fn_v2!("is_abs", |&ctx, path: str| {
-            Ok(Path::new(&path).is_absolute())
+            Ok(Path::new(path.as_str()).is_absolute())
         }));
 }
